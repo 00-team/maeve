@@ -134,11 +134,11 @@ async fn main() -> Result<(), MaeveError> {
     let total_chunks = samples.len() / (FRAME_SIZE * 2);
 
     for (cx, chunk) in samples.chunks(FRAME_SIZE * 2).enumerate() {
-        let clen = chunk.len();
+        // let clen = chunk.len();
         for (i, d) in chunk.iter().enumerate() {
             pcm_in_be[i] = (*d as f32 * 0.5) as i16;
         }
-        let len = encoder.encode(&pcm_in_be[..clen], &mut opus_pkt).unwrap();
+        let len = encoder.encode(&pcm_in_be, &mut opus_pkt).unwrap();
 
         let packet = OutAudio::new(&AudioData::C2S {
             id,
