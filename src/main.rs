@@ -1,24 +1,20 @@
 use futures::prelude::*;
-use std::io::Cursor;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::task::LocalSet;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::sync::mpsc;
 
 mod logger;
 
-use tsclientlib::{
-    ChannelId, ClientId, Connection, DisconnectOptions, FiletransferHandle, Identity, StreamItem,
-};
+use tsclientlib::{ChannelId, Connection, DisconnectOptions, Identity, StreamItem};
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
 // use tsproto_packets::packets::AudioData;
 
 // mod audio_utils;
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-struct ConnectionId(u64);
+// #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+// struct ConnectionId(u64);
 
 #[derive(Debug)]
 struct MaeveError {}
@@ -56,14 +52,15 @@ async fn main() -> Result<(), MaeveError> {
 
     // let (lams_info, lams_data) = shravan::codec::open(LAMS).unwrap();
 
-    let con_id = ConnectionId(1);
-    let local_set = LocalSet::new();
+    // let con_id = ConnectionId(1);
+    // let local_set = LocalSet::new();
     // let audiodata = audio_utils::start(&local_set)?;
 
     // let con_config = Connection::build("185.209.42.64")
     let con_config = Connection::build("127.0.0.1")
         .log_commands(false)
         .channel_id(ChannelId(1))
+        // .channel("Underground")
         .name("Maeve");
 
     // Optionally set the key of this client, otherwise a new key is generated.
@@ -100,7 +97,7 @@ async fn main() -> Result<(), MaeveError> {
     //     )
     //     .unwrap();
 
-    let (send, mut recv) = mpsc::channel(5);
+    let (send, mut recv) = mpsc::channel(1);
 
     let mut ffout = ffmpeg.stdout.unwrap();
     let mut audio_out = Vec::with_capacity(50 * 1024 * 1024);
@@ -126,50 +123,59 @@ async fn main() -> Result<(), MaeveError> {
     )
     .expect("Could not create encoder");
 
-    tokio::spawn(async move {
-        let mut id = 0;
+    let mut id = 0;
 
-        const FRAME_SIZE: usize = 960;
-        const MAX_PACKET_SIZE: usize = 3 * 1276;
+    const FRAME_SIZE: usize = 960;
+    const MAX_PACKET_SIZE: usize = 3 * 1276;
 
-        let mut pcm_in_be: [i16; FRAME_SIZE * 2] = [0; FRAME_SIZE * 2];
-        let mut opus_pkt: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
+    let mut pcm_in_be: [i16; FRAME_SIZE * 2] = [0; FRAME_SIZE * 2];
+    let mut opus_pkt: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
+    let mut all_packets = Vec::with_capacity(50 * 60 * 30);
+    let total_chunks = samples.len() / (FRAME_SIZE * 2);
 
-        for chunk in samples.chunks(FRAME_SIZE * 2) {
-            for (i, d) in chunk.iter().enumerate() {
-                pcm_in_be[i] = (*d as f32 * 0.5) as i16;
-            }
-            let len = encoder.encode(&pcm_in_be, &mut opus_pkt[..]).unwrap();
-
-            let packet = OutAudio::new(&AudioData::C2S {
-                id,
-                codec: CodecType::OpusMusic,
-                data: &opus_pkt[..len],
-            });
-            id += 1;
-
-            send.send(packet).await.unwrap();
-
-            tokio::time::sleep(Duration::from_micros(17000)).await;
+    for (cx, chunk) in samples.chunks(FRAME_SIZE * 2).enumerate() {
+        let clen = chunk.len();
+        for (i, d) in chunk.iter().enumerate() {
+            pcm_in_be[i] = (*d as f32 * 0.5) as i16;
         }
+        let len = encoder.encode(&pcm_in_be[..clen], &mut opus_pkt).unwrap();
 
-        // for chunk in LAMS.chunks((48000.0 * 0.002) as usize * 2) {
-        //     // log::info!("data[i16]: {:?}", &chunk[0..10]);
-        //     let data = bytemuck::cast_slice(chunk);
-        //     // log::info!("data[u8]: {:?}", &data[0..20]);
-        //     let packet = OutAudio::new(&AudioData::C2S {
-        //         id: 0,
-        //         codec: CodecType::OpusVoice,
-        //         data,
-        //     });
-        //     // id += 1;
-        //     send.send(packet).await.unwrap();
-        // }
+        let packet = OutAudio::new(&AudioData::C2S {
+            id,
+            codec: CodecType::OpusMusic,
+            data: &opus_pkt[..len],
+        });
+        id += 1;
+        all_packets.push(packet);
+        if cx.is_multiple_of(1000) {
+            log::info!("encoded: {cx}/{total_chunks}");
+        }
+    }
 
-        // loop {
-        //     tokio::time::sleep(Duration::from_millis(100)).await;
-        // }
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_micros(20000));
+        for p in all_packets {
+            interval.tick().await;
+            let _ = send.send(p).await;
+        }
     });
+
+    // for chunk in LAMS.chunks((48000.0 * 0.002) as usize * 2) {
+    //     // log::info!("data[i16]: {:?}", &chunk[0..10]);
+    //     let data = bytemuck::cast_slice(chunk);
+    //     // log::info!("data[u8]: {:?}", &data[0..20]);
+    //     let packet = OutAudio::new(&AudioData::C2S {
+    //         id: 0,
+    //         codec: CodecType::OpusVoice,
+    //         data,
+    //     });
+    //     // id += 1;
+    //     send.send(packet).await.unwrap();
+    // }
+
+    // loop {
+    //     tokio::time::sleep(Duration::from_millis(100)).await;
+    // }
 
     // {
     //     let mut a2t = audiodata.a2ts.lock().unwrap();
@@ -207,6 +213,13 @@ async fn main() -> Result<(), MaeveError> {
             // }
             Ok(())
         });
+
+        // let conx = con.clone();
+        // tokio::spawn(async move {
+        //     while let Some(packet) = recv.recv().await {
+        //         conx.send_audio(packet).unwrap();
+        //     }
+        // });
 
         // Wait for ctrl + c
         tokio::select! {
