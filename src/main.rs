@@ -1,60 +1,54 @@
 use futures::prelude::*;
-use std::process::Stdio;
-use std::time::Duration;
-use tokio::io::AsyncReadExt;
-use tokio::process::Command;
-use tokio::sync::mpsc;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{RwLock, mpsc};
+use tsclientlib::{
+    ChannelId, Connection, DisconnectOptions, Identity, MessageTarget,
+    OutCommandExt, StreamItem,
+};
+use tsproto_packets::packets::OutPacket;
 
+mod audio;
+mod error;
 mod logger;
 
-use tsclientlib::{ChannelId, Connection, DisconnectOptions, Identity, StreamItem};
-use tsproto_packets::packets::{AudioData, CodecType, OutAudio};
-// use tsproto_packets::packets::AudioData;
+pub use error::MaeveError;
 
-// mod audio_utils;
+#[derive(Clone)]
+struct Song {
+    packets: Vec<OutPacket>,
+    name: String,
+}
 
-// #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-// struct ConnectionId(u64);
-
-#[derive(Debug)]
-struct MaeveError {}
+const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
+const PACKET_DELAY: Duration = Duration::from_micros(20000);
 
 #[tokio::main]
 async fn main() -> Result<(), MaeveError> {
     log::set_logger(&logger::MasterLogger).expect("could not init logger");
     log::set_max_level(log::LevelFilter::Trace);
 
-    let path = std::env::args().nth(1).expect("no audio");
+    let playlist = Arc::new(RwLock::new(Vec::<Song>::with_capacity(256)));
+    let current_playing = RwLock::new(0usize);
 
-    let ffmpeg = Command::new("ffmpeg")
-        .args(&[
-            // "-loglevel",
-            // "quiet",
-            "-i",
-            &path,
-            "-af",
-            "aresample=48000",
-            "-f",
-            "s16be",
-            "pipe:1",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("no ffmpeg");
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
 
-    // const LAMS: &[u8] = include_bytes!("../audio/jf.opus");
-    // let li16: &[i16] = bytemuck::cast_slice(LAMS);
+    let (send_audio, mut recv_audio) = mpsc::channel(1);
+    let (send_text, mut recv_text) = mpsc::channel(100);
 
-    // Assuming you have a Vec<u8> raw_data from the file
-
-    // let (lams_data, _) = ogg_opus::decode::<_, 48000>(Cursor::new(LAMS)).expect("invalid opus");
-
-    // let (lams_info, lams_data) = shravan::codec::open(LAMS).unwrap();
-
-    // let con_id = ConnectionId(1);
-    // let local_set = LocalSet::new();
-    // let audiodata = audio_utils::start(&local_set)?;
+    let adpp = playlist.clone();
+    let adsx = send_text.clone();
+    let t = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            for p in args {
+                let Ok(packets) = audio::audio_render(&p).await else {
+                    continue;
+                };
+                adpp.write().await.push(Song { name: p.clone(), packets });
+                let _ = adsx.send(format!("added {p} to playlist")).await;
+            }
+        });
+    });
 
     // let con_config = Connection::build("185.209.42.64")
     let con_config = Connection::build("127.0.0.1")
@@ -75,6 +69,7 @@ async fn main() -> Result<(), MaeveError> {
     // Connect
     let mut con = con_config.connect().unwrap();
 
+    // wait to connect
     let r = con
         .events()
         .try_filter(|e| future::ready(matches!(e, StreamItem::BookEvents(_))))
@@ -84,105 +79,33 @@ async fn main() -> Result<(), MaeveError> {
         r.unwrap();
     }
 
-    // const AVATAR: &[u8] = include_bytes!("../avatar/avatar2.png");
-    //
-    // let fth = con
-    //     .upload_file(
-    //         ChannelId(0),
-    //         "/avatar",
-    //         None,
-    //         AVATAR.len() as u64,
-    //         true,
-    //         false,
-    //     )
-    //     .unwrap();
-
-    let (send, mut recv) = mpsc::channel(1);
-
-    let mut ffout = ffmpeg.stdout.unwrap();
-    let mut audio_out = Vec::with_capacity(50 * 1024 * 1024);
-    ffout.read_to_end(&mut audio_out).await.unwrap();
-    let samples: Vec<i16> = audio_out
-        .chunks_exact(2)
-        .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
-        .collect();
-
-    let mut err = String::with_capacity(50 * 1024);
-    ffmpeg
-        .stderr
-        .unwrap()
-        .read_to_string(&mut err)
-        .await
-        .unwrap();
-    log::info!("stderr: {err}");
-
-    let encoder = audiopus::coder::Encoder::new(
-        audiopus::SampleRate::Hz48000,
-        audiopus::Channels::Stereo,
-        audiopus::Application::Audio,
-    )
-    .expect("Could not create encoder");
-
-    let mut id = 0;
-
-    const FRAME_SIZE: usize = 960;
-    const MAX_PACKET_SIZE: usize = 3 * 1276;
-
-    let mut pcm_in_be: [i16; FRAME_SIZE * 2] = [0; FRAME_SIZE * 2];
-    let mut opus_pkt: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-    let mut all_packets = Vec::with_capacity(50 * 60 * 30);
-    let total_chunks = samples.len() / (FRAME_SIZE * 2);
-
-    for (cx, chunk) in samples.chunks(FRAME_SIZE * 2).enumerate() {
-        // let clen = chunk.len();
-        for (i, d) in chunk.iter().enumerate() {
-            pcm_in_be[i] = (*d as f32 * 0.5) as i16;
-        }
-        let len = encoder.encode(&pcm_in_be, &mut opus_pkt).unwrap();
-
-        let packet = OutAudio::new(&AudioData::C2S {
-            id,
-            codec: CodecType::OpusMusic,
-            data: &opus_pkt[..len],
-        });
-        id += 1;
-        all_packets.push(packet);
-        if cx.is_multiple_of(1000) {
-            log::info!("encoded: {cx}/{total_chunks}");
-        }
-    }
-
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_micros(20000));
-        for p in all_packets {
-            interval.tick().await;
-            let _ = send.send(p).await;
+        loop {
+            let song = {
+                let px = *current_playing.read().await;
+                let pp = playlist.read().await;
+                if px >= pp.len() {
+                    log::info!("no more song");
+                    tokio::time::sleep(PLAYLIST_END_DUR).await;
+                    continue;
+                }
+
+                pp[px].clone()
+            };
+
+            let name = song.name.clone();
+            log::info!("song: {name}");
+            let _ = send_text.send(format!("now playing: {name}")).await;
+
+            let mut interval = tokio::time::interval(PACKET_DELAY);
+            for p in song.packets {
+                interval.tick().await;
+                let _ = send_audio.send(p).await;
+            }
+
+            *current_playing.write().await += 1;
         }
     });
-
-    // for chunk in LAMS.chunks((48000.0 * 0.002) as usize * 2) {
-    //     // log::info!("data[i16]: {:?}", &chunk[0..10]);
-    //     let data = bytemuck::cast_slice(chunk);
-    //     // log::info!("data[u8]: {:?}", &data[0..20]);
-    //     let packet = OutAudio::new(&AudioData::C2S {
-    //         id: 0,
-    //         codec: CodecType::OpusVoice,
-    //         data,
-    //     });
-    //     // id += 1;
-    //     send.send(packet).await.unwrap();
-    // }
-
-    // loop {
-    //     tokio::time::sleep(Duration::from_millis(100)).await;
-    // }
-
-    // {
-    //     let mut a2t = audiodata.a2ts.lock().unwrap();
-    //     a2t.set_listener(send);
-    //     a2t.set_volume(args.volume);
-    //     a2t.set_playing(true);
-    // }
 
     loop {
         // let t2a = audiodata.ts2a.clone();
@@ -214,16 +137,8 @@ async fn main() -> Result<(), MaeveError> {
             Ok(())
         });
 
-        // let conx = con.clone();
-        // tokio::spawn(async move {
-        //     while let Some(packet) = recv.recv().await {
-        //         conx.send_audio(packet).unwrap();
-        //     }
-        // });
-
-        // Wait for ctrl + c
         tokio::select! {
-            send_audio = recv.recv() => {
+            send_audio = recv_audio.recv() => {
                 if let Some(packet) = send_audio {
                     con.send_audio(packet).unwrap();
                 } else {
@@ -231,15 +146,20 @@ async fn main() -> Result<(), MaeveError> {
                     break;
                 }
             }
+            send_text = recv_text.recv() => {
+                let Some(text) = send_text else { continue };
+                let Ok(state) = con.get_state() else { continue };
+                let _ = state.send_message(MessageTarget::Channel, &text).send(&mut con);
+            }
             _ = tokio::signal::ctrl_c() => { break; }
             r = events => {
                 r.unwrap();
                 break;
-                // bail!("Disconnected");
             }
         };
     }
 
+    let _ = t.join();
     log::info!("yoo diss");
 
     // Disconnect
