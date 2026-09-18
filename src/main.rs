@@ -86,8 +86,6 @@ async fn main() -> Result<(), MaeveError> {
         r.unwrap();
     }
 
-    let own_client = con.get_state().unwrap().own_client;
-
     let ps = state.clone();
     tokio::spawn(async move {
         let state = ps;
@@ -110,8 +108,9 @@ async fn main() -> Result<(), MaeveError> {
                 }
 
                 while !state.playing() {
-                    state.playing_notified().await;
-                    interval.reset();
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    // state.playing_notified().await;
+                    // interval.reset();
                     continue;
                 }
 
@@ -138,11 +137,8 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 };
 
-                if target != MessageTarget::Channel {
-                    continue;
-                }
-
-                if invoker.id == own_client {
+                let MessageTarget::Client(chid) = target else { continue };
+                if invoker.id == chid {
                     continue;
                 }
 
@@ -159,7 +155,10 @@ async fn main() -> Result<(), MaeveError> {
                     MaeveCommand::Past => state.past(),
                     MaeveCommand::Help => {
                         let _ = send_text
-                            .send(MaeveCommand::help().to_string())
+                            .send((
+                                invoker.id,
+                                MaeveCommand::help().to_string(),
+                            ))
                             .await;
                     }
                     MaeveCommand::Add(name) => {
@@ -168,7 +167,10 @@ async fn main() -> Result<(), MaeveError> {
                             const ERR: &str =
                                 "[COLOR=#ff0000]NO FILE WAS FOUND[/COLOR]";
                             let _ = send_text
-                                .send(format!("using \"{name}\" {ERR}"))
+                                .send((
+                                    invoker.id,
+                                    format!("using \"{name}\" {ERR}"),
+                                ))
                                 .await;
                             return Ok(());
                         }
@@ -177,10 +179,14 @@ async fn main() -> Result<(), MaeveError> {
                             state.queue_add(p).await;
                         }
 
-                        let _ = send_text.send(state.pl_list().await).await;
+                        let _ = send_text
+                            .send((invoker.id, state.pl_list().await))
+                            .await;
                     }
                     MaeveCommand::List => {
-                        let _ = send_text.send(state.pl_list().await).await;
+                        let _ = send_text
+                            .send((invoker.id, state.pl_list().await))
+                            .await;
                     }
                     MaeveCommand::Clear => state.pl_clear().await,
                     MaeveCommand::QueueClear => state.queue_clear().await,
@@ -200,9 +206,9 @@ async fn main() -> Result<(), MaeveError> {
                 }
             }
             send_text = recv_text.recv() => {
-                let Some(text) = send_text else { continue };
+                let Some((chid, text)) = send_text else { continue };
                 let Ok(state) = con.get_state() else { continue };
-                let _ = state.send_message(MessageTarget::Channel, &text).send(&mut con);
+                let _ = state.send_message(MessageTarget::Client(chid), &text).send(&mut con);
             }
             _ = tokio::signal::ctrl_c() => { break; }
             _ = sigterm.recv() => { break; }
