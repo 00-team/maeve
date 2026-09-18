@@ -176,6 +176,8 @@ async fn main() -> Result<(), MaeveError> {
                         for p in list {
                             state.queue_add(p).await;
                         }
+
+                        let _ = send_text.send(state.pl_list().await).await;
                     }
                     MaeveCommand::List => {
                         let _ = send_text.send(state.pl_list().await).await;
