@@ -8,10 +8,11 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
     let ffmpeg = Command::new("taskset")
         .args(&[
             "-c",
-            "0,1",
+            "0,1,2",
             "ffmpeg",
+            "-hide_banner",
             "-loglevel",
-            "quiet",
+            "error",
             "-i",
             &path,
             "-af",
@@ -42,6 +43,10 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
     ffmpeg.stderr.unwrap().read_to_string(&mut err).await.unwrap();
     log::info!("stderr: {err}");
 
+    if samples.is_empty() {
+        return Err(MaeveError::AudioEncodeFailed);
+    }
+
     let encoder = audiopus::coder::Encoder::new(
         audiopus::SampleRate::Hz48000,
         audiopus::Channels::Stereo,
@@ -57,9 +62,9 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
     let mut pcm_in_be: [i16; FRAME_SIZE * 2] = [0; FRAME_SIZE * 2];
     let mut opus_pkt: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
     let mut all_packets = Vec::with_capacity(50 * 60 * 30);
-    let total_chunks = samples.len() / (FRAME_SIZE * 2);
+    // let total_chunks = samples.len() / (FRAME_SIZE * 2);
 
-    for (cx, chunk) in samples.chunks(FRAME_SIZE * 2).enumerate() {
+    for chunk in samples.chunks(FRAME_SIZE * 2) {
         // let clen = chunk.len();
         for (i, d) in chunk.iter().enumerate() {
             // pcm_in_be[i] = (*d as f32 * 0.5) as i16;
@@ -74,9 +79,10 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
         });
         id += 1;
         all_packets.push(packet);
-        if cx.is_multiple_of(1000) {
-            log::info!("encoded: {cx}/{total_chunks}");
-        }
+    }
+
+    if all_packets.is_empty() {
+        return Err(MaeveError::AudioEncodeFailed);
     }
 
     Ok(all_packets)
