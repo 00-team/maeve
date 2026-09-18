@@ -140,12 +140,10 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 }
 
-                log::info!("message: {message}");
                 let Some(cmd) = MaeveCommand::parse_str(&message) else {
                     continue;
                 };
 
-                log::info!("cmd: {cmd:?}");
                 match cmd {
                     MaeveCommand::Play => state.play(),
                     MaeveCommand::Pause => state.pause(),
