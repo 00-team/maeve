@@ -1,6 +1,6 @@
 use futures::prelude::*;
 use std::{sync::Arc, time::Duration};
-use tokio::sync::mpsc;
+use tokio::{signal::unix::SignalKind, sync::mpsc};
 use tsclientlib::{
     ChannelId, Connection, DisconnectOptions, Identity, MessageTarget,
     OutCommandExt, StreamItem,
@@ -24,6 +24,9 @@ const PACKET_DELAY: Duration = Duration::from_micros(20000);
 async fn main() -> Result<(), MaeveError> {
     log::set_logger(&logger::MasterLogger).expect("could not init logger");
     log::set_max_level(log::LevelFilter::Trace);
+
+    let mut sigterm =
+        tokio::signal::unix::signal(SignalKind::terminate()).unwrap();
 
     let state = Arc::new(MaeveState::new());
 
@@ -179,7 +182,6 @@ async fn main() -> Result<(), MaeveError> {
                     }
                     MaeveCommand::Clear => state.pl_clear().await,
                     MaeveCommand::QueueClear => state.queue_clear().await,
-                    
                 }
             }
 
@@ -201,6 +203,7 @@ async fn main() -> Result<(), MaeveError> {
                 let _ = state.send_message(MessageTarget::Channel, &text).send(&mut con);
             }
             _ = tokio::signal::ctrl_c() => { break; }
+            _ = sigterm.recv() => { break; }
             r = events => {
                 r.unwrap();
                 break;
