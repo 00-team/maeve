@@ -2,7 +2,7 @@ use std::process::Command;
 
 pub fn do_ls(arg: &str) -> Vec<String> {
     let output = Command::new("find")
-        .args(["-type", "f", "-L", arg])
+        .args([arg, "-type", "f"])
         .output()
         .expect("failed to execute find");
 
