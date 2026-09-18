@@ -1,25 +1,22 @@
 use futures::prelude::*;
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::mpsc;
 use tsclientlib::{
     ChannelId, Connection, DisconnectOptions, Identity, MessageTarget,
     OutCommandExt, StreamItem,
 };
-use tsproto_packets::packets::OutPacket;
 
 mod audio;
+mod command;
 mod error;
 mod logger;
+mod state;
 
 pub use error::MaeveError;
 
-#[derive(Clone)]
-struct Song {
-    packets: Vec<OutPacket>,
-    name: String,
-}
+use crate::{command::MaeveCommand, state::MaeveState};
 
-const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
+// const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
 const PACKET_DELAY: Duration = Duration::from_micros(20000);
 
 #[tokio::main]
@@ -27,25 +24,31 @@ async fn main() -> Result<(), MaeveError> {
     log::set_logger(&logger::MasterLogger).expect("could not init logger");
     log::set_max_level(log::LevelFilter::Trace);
 
-    let playlist = Arc::new(RwLock::new(Vec::<Song>::with_capacity(256)));
-    let current_playing = RwLock::new(0usize);
-
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let state = Arc::new(MaeveState::new());
 
     let (send_audio, mut recv_audio) = mpsc::channel(1);
     let (send_text, mut recv_text) = mpsc::channel(100);
 
-    let adpp = playlist.clone();
-    let adsx = send_text.clone();
-    let t = std::thread::spawn(move || {
+    for p in std::env::args().skip(1) {
+        state.queue_add(p).await;
+    }
+
+    let adst = state.clone();
+    std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
-            for p in args {
-                let Ok(packets) = audio::audio_render(&p).await else {
+            loop {
+                let Some(name) = adst.queue_front().await else {
+                    adst.queue_notified().await;
                     continue;
                 };
-                adpp.write().await.push(Song { name: p.clone(), packets });
-                let _ = adsx.send(format!("added {p} to playlist")).await;
+
+                let Ok(packets) = audio::audio_render(&name).await else {
+                    adst.queue_pop_front().await;
+                    continue;
+                };
+                adst.add_song(state::Song { name, packets }).await;
+                adst.queue_pop_front().await;
             }
         });
     });
@@ -79,61 +82,98 @@ async fn main() -> Result<(), MaeveError> {
         r.unwrap();
     }
 
-    tokio::spawn(async move {
-        loop {
-            let song = {
-                let px = *current_playing.read().await;
-                let pp = playlist.read().await;
-                if px >= pp.len() {
-                    log::info!("no more song");
-                    tokio::time::sleep(PLAYLIST_END_DUR).await;
-                    continue;
-                }
+    let own_client = con.get_state().unwrap().own_client;
 
-                pp[px].clone()
+    let ps = state.clone();
+    tokio::spawn(async move {
+        let state = ps;
+        'pll: loop {
+            let Some(song) = state.current_song().await else {
+                log::info!("no more song");
+                state.current_notified().await;
+                continue;
             };
+            let current = state.current_index();
 
             let name = song.name.clone();
             log::info!("song: {name}");
-            let _ = send_text.send(format!("now playing: {name}")).await;
+            // let _ = send_text.send(format!("now playing: {name}")).await;
 
             let mut interval = tokio::time::interval(PACKET_DELAY);
             for p in song.packets {
+                if current != state.current_index() {
+                    continue 'pll;
+                }
+
+                while !state.playing() {
+                    state.playing_notified().await;
+                }
+
                 interval.tick().await;
                 let _ = send_audio.send(p).await;
             }
 
-            *current_playing.write().await += 1;
+            state.next();
         }
     });
 
     loop {
         // let t2a = audiodata.ts2a.clone();
         let events = con.events().try_for_each(|e| async {
-            match e {
-                // StreamItem::FileUpload(a, mut b) => {
-                //     log::info!("uploading");
-                //     assert_eq!(a, fth);
-                //     b.stream.write_all(AVATAR).await.unwrap();
-                //     log::info!("uploaded: {}", AVATAR.len());
-                // }
-                // StreamItem::FiletransferFailed(a, b) => {
-                //     log::error!("ftf: {b:#?}");
-                // }
-                _ => {}
+            let StreamItem::BookEvents(ees) = e else { return Ok(()) };
+
+            for e in ees {
+                let tsclientlib::events::Event::Message {
+                    target,
+                    invoker,
+                    message,
+                } = e
+                else {
+                    continue;
+                };
+
+                if target != MessageTarget::Channel {
+                    continue;
+                }
+
+                if invoker.id == own_client {
+                    continue;
+                }
+
+                log::info!("message: {message}");
+                let Some(cmd) = MaeveCommand::parse_str(&message) else {
+                    continue;
+                };
+
+                log::info!("cmd: {cmd:?}");
+                match cmd {
+                    MaeveCommand::Play => state.play(),
+                    MaeveCommand::Pause => state.pause(),
+                    MaeveCommand::Jump(x) => state.jump(x),
+                    MaeveCommand::Remove(x) => state.remove_song(x).await,
+                    MaeveCommand::Next => state.next(),
+                    MaeveCommand::Past => state.past(),
+                    MaeveCommand::Help => {
+                        let _ = send_text
+                            .send(MaeveCommand::help().to_string())
+                            .await;
+                    }
+                    MaeveCommand::Add(name) => {
+                        let p = std::path::Path::new(&name);
+                        if !p.is_file() {
+                            let _ = send_text
+                                .send(format!("file \"{name}\" [COLOR=#ff0000]NOT FOUND[/COLOR]"))
+                                .await;
+                            return Ok(());
+                        }
+                        state.queue_add(name).await;
+                    }
+                    MaeveCommand::List => {
+                        let _ = send_text.send(state.pl_list().await).await;
+                    }
+                }
             }
 
-            // if let StreamItem::Audio(packet) = e {
-            //     // let from = ClientId(match packet.data().data() {
-            //     //     AudioData::S2C { from, .. } => *from,
-            //     //     AudioData::S2CWhisper { from, .. } => *from,
-            //     //     _ => panic!("Can only handle S2C packets but got a C2S packet"),
-            //     // });
-            //     // let mut t2a = t2a.lock().unwrap();
-            //     // if let Err(error) = t2a.play_packet((con_id, from), packet) {
-            //     //     debug!(%error, "Failed to play packet");
-            //     // }
-            // }
             Ok(())
         });
 
@@ -159,7 +199,6 @@ async fn main() -> Result<(), MaeveError> {
         };
     }
 
-    let _ = t.join();
     log::info!("yoo diss");
 
     // Disconnect

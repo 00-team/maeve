@@ -15,7 +15,12 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
             "-i",
             &path,
             "-af",
-            "aresample=48000",
+            // "loudnorm=I=-16:LRA=11:TP=-1.5",
+            "loudnorm=I=-16:LRA=11:TP=-1.5,acompressor=threshold=-18dB:ratio=3:attack=20:release=250,alimiter=limit=0.95",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
             "-f",
             "s16be",
             "pipe:1",
@@ -34,12 +39,7 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
         .collect();
 
     let mut err = String::with_capacity(50 * 1024);
-    ffmpeg
-        .stderr
-        .unwrap()
-        .read_to_string(&mut err)
-        .await
-        .unwrap();
+    ffmpeg.stderr.unwrap().read_to_string(&mut err).await.unwrap();
     log::info!("stderr: {err}");
 
     let encoder = audiopus::coder::Encoder::new(
@@ -62,7 +62,8 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
     for (cx, chunk) in samples.chunks(FRAME_SIZE * 2).enumerate() {
         // let clen = chunk.len();
         for (i, d) in chunk.iter().enumerate() {
-            pcm_in_be[i] = (*d as f32 * 0.5) as i16;
+            // pcm_in_be[i] = (*d as f32 * 0.5) as i16;
+            pcm_in_be[i] = *d;
         }
         let len = encoder.encode(&pcm_in_be, &mut opus_pkt).unwrap();
 
