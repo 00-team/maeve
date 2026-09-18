@@ -1,0 +1,16 @@
+[Unit]
+Description=Maeve
+After=syslog.target
+
+[Service]
+Type=simple
+Restart=always
+WorkingDirectory=/x/maeve/
+ExecStart=/x/maeve/maeve
+KillSignal=SIGQUIT
+StandardError=file:/x/maeve/log.err
+StandardOutput=file:/x/maeve/log.out
+NotifyAccess=all
+
+[Install]
+WantedBy=multi-user.target
