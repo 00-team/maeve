@@ -9,6 +9,8 @@ pub enum MaeveCommand {
     Next,
     Past,
     List,
+    Clear,
+    QueueClear,
 }
 
 impl MaeveCommand {
@@ -16,7 +18,7 @@ impl MaeveCommand {
         "
 Maeve commands:
 
-!add <song-name>
+!add <song-query> -- use like music/fadaei*
 !jump <index>
 !remove <index>
 !play
@@ -24,8 +26,10 @@ Maeve commands:
 !next
 !past
 !list
+!clear -- this will clear the list
+!queue-clear this will clear the queue
 
-made by ostad 007
+[COLOR=#FFD700]made by ostad 007[/COLOR]
         "
     }
 
@@ -47,6 +51,8 @@ made by ostad 007
             "next" => Self::Next,
             "past" => Self::Past,
             "list" => Self::List,
+            "clear" => Self::Clear,
+            "queue-clear" => Self::QueueClear,
             _ => return None,
         })
     }

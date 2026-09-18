@@ -110,13 +110,15 @@ impl MaeveState {
         for (i, s) in pl.iter().enumerate() {
             let name = &s.name;
             if i == cx {
-                out += &format!("> [COLOR=#0fff0f]{i}[/COLOR] [B]{name}[/B]\n");
+                out += &format!(
+                    "{} [COLOR=#0fff0f]{i}[/COLOR] [B]{name}[/B]\n",
+                    if self.playing() { ">" } else { "|" }
+                );
                 continue;
             }
 
             out += &format!("[COLOR=#00ffff]{i}[/COLOR] {name}\n");
         }
-
 
         let q = self.queued.read().await;
         if q.is_empty() {
@@ -125,7 +127,7 @@ impl MaeveState {
 
         out.push_str("\nqueued:\n");
         for (i, p) in q.iter().enumerate() {
-            out += &format!("[COLOR=#f5deb3]{}[/COLOR] {p}\n", i + pl_len);
+            out += &format!("[COLOR=#FF69B4]{}[/COLOR] {p}\n", i + pl_len);
         }
 
         out
@@ -142,5 +144,15 @@ impl MaeveState {
     pub async fn queue_add(&self, path: String) {
         self.queued.write().await.push_back(path);
         self.queue_notify.notify_one();
+    }
+
+    pub async fn queue_clear(&self) {
+        self.queued.write().await.clear();
+    }
+
+    pub async fn pl_clear(&self) {
+        self.playlist.write().await.clear();
+        self.current_playing.store(0, Ordering::Relaxed);
+        self.currnet_notify.notify_one();
     }
 }

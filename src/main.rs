@@ -11,6 +11,7 @@ mod command;
 mod error;
 mod logger;
 mod state;
+mod utils;
 
 pub use error::MaeveError;
 
@@ -157,18 +158,26 @@ async fn main() -> Result<(), MaeveError> {
                             .await;
                     }
                     MaeveCommand::Add(name) => {
-                        let p = std::path::Path::new(&name);
-                        if !p.is_file() {
+                        let list = utils::do_ls(&name);
+                        if list.is_empty() {
+                            const ERR: &str =
+                                "[COLOR=#ff0000]NOT FILE WAS FOUND[/COLOR]";
                             let _ = send_text
-                                .send(format!("file \"{name}\" [COLOR=#ff0000]NOT FOUND[/COLOR]"))
+                                .send(format!("using \"{name}\" {ERR}"))
                                 .await;
                             return Ok(());
                         }
-                        state.queue_add(name).await;
+
+                        for p in list {
+                            state.queue_add(p).await;
+                        }
                     }
                     MaeveCommand::List => {
                         let _ = send_text.send(state.pl_list().await).await;
                     }
+                    MaeveCommand::Clear => state.pl_clear().await,
+                    MaeveCommand::QueueClear => state.queue_clear().await,
+                    
                 }
             }
 
