@@ -108,6 +108,8 @@ async fn main() -> Result<(), MaeveError> {
 
                 while !state.playing() {
                     state.playing_notified().await;
+                    interval.reset();
+                    continue;
                 }
 
                 interval.tick().await;
