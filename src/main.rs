@@ -163,10 +163,10 @@ async fn main() -> Result<(), MaeveError> {
                             .await;
                     }
                     MaeveCommand::Add(name) => {
-                        let list = utils::do_ls(&name);
+                        let list = utils::do_ls(&format!("music/{name}"));
                         if list.is_empty() {
                             const ERR: &str =
-                                "[COLOR=#ff0000]NOT FILE WAS FOUND[/COLOR]";
+                                "[COLOR=#ff0000]NO FILE WAS FOUND[/COLOR]";
                             let _ = send_text
                                 .send(format!("using \"{name}\" {ERR}"))
                                 .await;
