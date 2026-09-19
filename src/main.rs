@@ -92,6 +92,13 @@ async fn main() -> Result<(), MaeveError> {
         'pll: loop {
             let Some(song) = state.current_song().await else {
                 log::info!("no more song");
+
+                if state.current_index() > 0 && state.loop_playlist() {
+                    state.jump(0);
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+
                 state.current_notified().await;
                 continue;
             };
@@ -118,12 +125,13 @@ async fn main() -> Result<(), MaeveError> {
                 let _ = send_audio.send(p).await;
             }
 
-            state.next();
+            if !state.loop_song() {
+                state.next();
+            }
         }
     });
 
     loop {
-        // let t2a = audiodata.ts2a.clone();
         let events = con.events().try_for_each(|e| async {
             let StreamItem::BookEvents(ees) = e else { return Ok(()) };
 
