@@ -110,7 +110,7 @@ async fn main() -> Result<(), MaeveError> {
                 while !state.playing() {
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     // state.playing_notified().await;
-                    // interval.reset();
+                    interval.reset();
                     continue;
                 }
 
