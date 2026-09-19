@@ -146,32 +146,54 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 };
 
+                let sx = async |s: String| {
+                    let _ = send_text.send((invoker.id, s)).await;
+                };
+
                 match cmd {
                     MaeveCommand::Play => state.play(),
                     MaeveCommand::Pause => state.pause(),
-                    MaeveCommand::Jump(x) => state.jump(x),
-                    MaeveCommand::Remove(x) => state.remove_song(x).await,
+                    MaeveCommand::Jump(x) => {
+                        state.jump(x);
+                        if let Some(s) = state.current_song().await {
+                            sx(format!("now playing: {}", s.name)).await;
+                        } else {
+                            sx("end of playlist".to_string()).await;
+                        }
+                    }
+                    MaeveCommand::Remove(r) => {
+                        state.remove_range(r).await;
+                        sx(state.pl_list().await).await;
+                    }
+                    MaeveCommand::Sort => {
+                        state.sort().await;
+                        sx(state.pl_list().await).await;
+                    }
+                    MaeveCommand::Shuffle => {
+                        state.shuffle().await;
+                        sx(state.pl_list().await).await;
+                    }
+                    MaeveCommand::Loop => {
+                        state.loop_cycle();
+                        if state.loop_playlist() {
+                            sx("now looping playlist".to_string()).await;
+                        } else if state.loop_song() {
+                            sx("now looping song".to_string()).await;
+                        } else {
+                            sx("looping disabled".to_string()).await;
+                        }
+                    }
                     MaeveCommand::Next => state.next(),
                     MaeveCommand::Past => state.past(),
                     MaeveCommand::Help => {
-                        let _ = send_text
-                            .send((
-                                invoker.id,
-                                MaeveCommand::help().to_string(),
-                            ))
-                            .await;
+                        sx(MaeveCommand::help().to_string()).await;
                     }
                     MaeveCommand::Add(name) => {
                         let list = utils::do_ls(&format!("music/{name}"));
                         if list.is_empty() {
                             const ERR: &str =
                                 "[COLOR=#ff0000]NO FILE WAS FOUND[/COLOR]";
-                            let _ = send_text
-                                .send((
-                                    invoker.id,
-                                    format!("using \"{name}\" {ERR}"),
-                                ))
-                                .await;
+                            sx(format!("using \"{name}\" {ERR}")).await;
                             return Ok(());
                         }
 
@@ -179,15 +201,9 @@ async fn main() -> Result<(), MaeveError> {
                             state.queue_add(p).await;
                         }
 
-                        let _ = send_text
-                            .send((invoker.id, state.pl_list().await))
-                            .await;
+                        sx(state.pl_list().await).await;
                     }
-                    MaeveCommand::List => {
-                        let _ = send_text
-                            .send((invoker.id, state.pl_list().await))
-                            .await;
-                    }
+                    MaeveCommand::List => sx(state.pl_list().await).await,
                     MaeveCommand::Clear => state.pl_clear().await,
                     MaeveCommand::QueueClear => state.queue_clear().await,
                 }

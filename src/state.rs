@@ -1,3 +1,4 @@
+use rand::seq::SliceRandom;
 use std::{
     collections::VecDeque,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -20,6 +21,8 @@ pub struct MaeveState {
     playlist: RwLock<Vec<Song>>,
     queued: RwLock<VecDeque<String>>,
     queue_notify: Notify,
+    loop_playlist: AtomicBool,
+    loop_song: AtomicBool,
 }
 
 impl MaeveState {
@@ -32,6 +35,8 @@ impl MaeveState {
             queue_notify: Notify::new(),
             playlist: Default::default(),
             queued: Default::default(),
+            loop_song: AtomicBool::new(false),
+            loop_playlist: AtomicBool::new(false),
         }
     }
 
@@ -40,8 +45,30 @@ impl MaeveState {
     }
 
     pub fn play(&self) {
-        self.playing.store(true, Ordering::Relaxed);
-        self.playing_notify.notify_one();
+        if !self.playing.fetch_xor(true, Ordering::SeqCst) {
+            self.playing_notify.notify_one();
+        }
+    }
+
+    pub fn loop_song(&self) -> bool {
+        self.loop_song.load(Ordering::Relaxed)
+    }
+
+    pub fn loop_playlist(&self) -> bool {
+        self.loop_playlist.load(Ordering::Relaxed)
+    }
+
+    pub fn loop_cycle(&self) {
+        if self.loop_song() {
+            self.loop_song.store(false, Ordering::Relaxed);
+            self.loop_playlist.store(false, Ordering::Relaxed);
+        } else if self.loop_playlist() {
+            self.loop_song.store(true, Ordering::Relaxed);
+            self.loop_playlist.store(false, Ordering::Relaxed);
+        } else {
+            self.loop_song.store(false, Ordering::Relaxed);
+            self.loop_playlist.store(true, Ordering::Relaxed);
+        }
     }
 
     pub async fn add_song(&self, song: Song) {
@@ -49,14 +76,21 @@ impl MaeveState {
         self.currnet_notify.notify_one();
     }
 
-    pub async fn remove_song(&self, index: usize) {
+    pub async fn remove_range(&self, range: std::ops::Range<usize>) {
         let mut pl = self.playlist.write().await;
-        if pl.len() <= index {
-            return;
-        }
-
-        pl.remove(index);
+        let range = range.start..pl.len().min(range.end);
+        pl.drain(range);
         self.currnet_notify.notify_one();
+    }
+
+    pub async fn shuffle(&self) {
+        let mut pl = self.playlist.write().await;
+        pl.shuffle(&mut rand::rng());
+    }
+
+    pub async fn sort(&self) {
+        let mut pl = self.playlist.write().await;
+        pl.sort_by_key(|s| s.name.clone());
     }
 
     pub fn jump(&self, index: usize) {
@@ -102,7 +136,15 @@ impl MaeveState {
 
     pub async fn pl_list(&self) -> String {
         let mut out = String::with_capacity(1024);
-        out.push_str("\ncurrent play list:\n\n");
+        out.push_str("\ncurrent playlist:\n");
+
+        if self.loop_playlist() {
+            out.push_str("> looping playlist");
+        } else if self.loop_song() {
+            out.push_str("> looping current song");
+        }
+
+        out.push_str("\n\n");
 
         let cx = self.current_index();
         let pl = self.playlist.read().await;
