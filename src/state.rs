@@ -122,9 +122,9 @@ impl MaeveState {
         self.currnet_notify.notified().await;
     }
 
-    pub async fn playing_notified(&self) {
-        self.currnet_notify.notified().await;
-    }
+    // pub async fn playing_notified(&self) {
+    //     self.currnet_notify.notified().await;
+    // }
 
     pub async fn queue_notified(&self) {
         self.queue_notify.notified().await;
