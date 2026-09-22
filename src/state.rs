@@ -1,7 +1,8 @@
 use rand::seq::SliceRandom;
 use std::{
     collections::VecDeque,
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    hash::{DefaultHasher, Hash, Hasher},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 use tokio::sync::{Notify, RwLock};
 use tsproto_packets::packets::OutPacket;
@@ -10,14 +11,24 @@ use tsproto_packets::packets::OutPacket;
 pub struct Song {
     pub packets: Vec<OutPacket>,
     pub name: String,
+    pub hash: u64,
+}
+
+impl Song {
+    pub fn hash(name: &str, size: usize) -> u64 {
+        let mut hashar = DefaultHasher::default();
+        name.hash(&mut hashar);
+        size.hash(&mut hashar);
+        hashar.finish()
+    }
 }
 
 pub struct MaeveState {
     playing: AtomicBool,
     playing_notify: Notify,
-    // current_playing: RwLock<usize>,
     current_playing: AtomicUsize,
-    currnet_notify: Notify,
+    current_hash: AtomicU64,
+    current_notify: Notify,
     playlist: RwLock<Vec<Song>>,
     queued: RwLock<VecDeque<String>>,
     queue_notify: Notify,
@@ -31,7 +42,8 @@ impl MaeveState {
             playing: AtomicBool::new(true),
             playing_notify: Notify::new(),
             current_playing: AtomicUsize::new(0),
-            currnet_notify: Notify::new(),
+            current_hash: AtomicU64::new(0),
+            current_notify: Notify::new(),
             queue_notify: Notify::new(),
             playlist: Default::default(),
             queued: Default::default(),
@@ -73,14 +85,21 @@ impl MaeveState {
 
     pub async fn add_song(&self, song: Song) {
         self.playlist.write().await.push(song);
-        self.currnet_notify.notify_one();
+        self.current_notify.notify_one();
     }
 
     pub async fn remove_range(&self, range: std::ops::Range<usize>) {
         let mut pl = self.playlist.write().await;
         let range = range.start..pl.len().min(range.end);
-        pl.drain(range);
-        self.currnet_notify.notify_one();
+        pl.drain(range.clone());
+        let cdx = self.current_index();
+        if range.contains(&cdx) {
+            self.current_playing.store(range.start, Ordering::Relaxed);
+        } else if cdx > range.end {
+            self.current_playing.fetch_sub(range.len(), Ordering::Relaxed);
+        }
+        self.update_hash().await;
+        self.current_notify.notify_one();
     }
 
     pub async fn shuffle(&self) {
@@ -93,19 +112,22 @@ impl MaeveState {
         pl.sort_by_key(|s| s.name.clone());
     }
 
-    pub fn jump(&self, index: usize) {
+    pub async fn jump(&self, index: usize) {
         self.current_playing.store(index, Ordering::Relaxed);
-        self.currnet_notify.notify_one();
+        self.current_notify.notify_one();
+        self.update_hash().await;
     }
 
-    pub fn next(&self) {
+    pub async fn next(&self) {
         self.current_playing.fetch_add(1, Ordering::Relaxed);
-        self.currnet_notify.notify_one();
+        self.current_notify.notify_one();
+        self.update_hash().await;
     }
 
-    pub fn past(&self) {
+    pub async fn past(&self) {
         self.current_playing.fetch_sub(1, Ordering::Relaxed);
-        self.currnet_notify.notify_one();
+        self.current_notify.notify_one();
+        self.update_hash().await;
     }
 
     pub async fn current_song(&self) -> Option<Song> {
@@ -114,17 +136,27 @@ impl MaeveState {
         pl.get(cx).cloned()
     }
 
+    async fn update_hash(&self) {
+        let hash = if let Some(song) = self.current_song().await {
+            song.hash
+        } else {
+            0
+        };
+
+        self.current_hash.store(hash, Ordering::Relaxed);
+    }
+
     pub fn current_index(&self) -> usize {
         self.current_playing.load(Ordering::Relaxed)
     }
 
-    pub async fn current_notified(&self) {
-        self.currnet_notify.notified().await;
+    pub fn current_hash(&self) -> u64 {
+        self.current_hash.load(Ordering::Relaxed)
     }
 
-    // pub async fn playing_notified(&self) {
-    //     self.currnet_notify.notified().await;
-    // }
+    pub async fn current_notified(&self) {
+        self.current_notify.notified().await;
+    }
 
     pub async fn queue_notified(&self) {
         self.queue_notify.notified().await;
@@ -195,6 +227,7 @@ impl MaeveState {
     pub async fn pl_clear(&self) {
         self.playlist.write().await.clear();
         self.current_playing.store(0, Ordering::Relaxed);
-        self.currnet_notify.notify_one();
+        self.update_hash().await;
+        self.current_notify.notify_one();
     }
 }

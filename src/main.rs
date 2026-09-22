@@ -15,7 +15,10 @@ mod utils;
 
 pub use error::MaeveError;
 
-use crate::{command::MaeveCommand, state::MaeveState};
+use crate::{
+    command::MaeveCommand,
+    state::{MaeveState, Song},
+};
 
 // const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
 const PACKET_DELAY: Duration = Duration::from_micros(20000);
@@ -51,7 +54,12 @@ async fn main() -> Result<(), MaeveError> {
                     adst.queue_pop_front().await;
                     continue;
                 };
-                adst.add_song(state::Song { name, packets }).await;
+                adst.add_song(state::Song {
+                    hash: Song::hash(&name, packets.len()),
+                    name,
+                    packets,
+                })
+                .await;
                 adst.queue_pop_front().await;
             }
         });
@@ -94,7 +102,7 @@ async fn main() -> Result<(), MaeveError> {
                 log::info!("no more song");
 
                 if state.current_index() > 0 && state.loop_playlist() {
-                    state.jump(0);
+                    state.jump(0).await;
                     tokio::time::sleep(Duration::from_millis(500)).await;
                     continue;
                 }
@@ -102,7 +110,7 @@ async fn main() -> Result<(), MaeveError> {
                 state.current_notified().await;
                 continue;
             };
-            let current = state.current_index();
+            let current_hash = song.hash;
 
             let name = song.name.clone();
             log::info!("song: {name}");
@@ -110,7 +118,7 @@ async fn main() -> Result<(), MaeveError> {
 
             let mut interval = tokio::time::interval(PACKET_DELAY);
             for p in song.packets {
-                if current != state.current_index() {
+                if current_hash != state.current_hash() {
                     continue 'pll;
                 }
 
@@ -126,7 +134,7 @@ async fn main() -> Result<(), MaeveError> {
             }
 
             if !state.loop_song() {
-                state.next();
+                state.next().await;
             }
         }
     });
@@ -162,7 +170,7 @@ async fn main() -> Result<(), MaeveError> {
                     MaeveCommand::Play => state.play(),
                     MaeveCommand::Pause => state.pause(),
                     MaeveCommand::Jump(x) => {
-                        state.jump(x);
+                        state.jump(x).await;
                         if let Some(s) = state.current_song().await {
                             sx(format!("now playing: {}", s.name)).await;
                         } else {
@@ -191,8 +199,8 @@ async fn main() -> Result<(), MaeveError> {
                             sx("looping disabled".to_string()).await;
                         }
                     }
-                    MaeveCommand::Next => state.next(),
-                    MaeveCommand::Past => state.past(),
+                    MaeveCommand::Next => state.next().await,
+                    MaeveCommand::Past => state.past().await,
                     MaeveCommand::Help => {
                         sx(MaeveCommand::help().to_string()).await;
                     }
