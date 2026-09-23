@@ -36,10 +36,6 @@ async fn main() -> Result<(), MaeveError> {
     let (send_audio, mut recv_audio) = mpsc::channel(1);
     let (send_text, mut recv_text) = mpsc::channel(100);
 
-    for p in std::env::args().skip(1) {
-        state.queue_add(p).await;
-    }
-
     let adst = state.clone();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -219,10 +215,7 @@ async fn main() -> Result<(), MaeveError> {
                         }
 
                         log::info!("adding {} songs from {name}", list.len());
-                        for p in list {
-                            state.queue_add(p).await;
-                        }
-
+                        state.queue_add(list).await;
                         sx(state.pl_list().await);
                     }
                     MaeveCommand::List => sx(state.pl_list().await),
@@ -245,8 +238,14 @@ async fn main() -> Result<(), MaeveError> {
             }
             send_text = recv_text.recv() => {
                 let Some((chid, text)) = send_text else { continue };
-                let Ok(state) = con.get_state() else { continue };
-                let _ = state.send_message(MessageTarget::Client(chid), &text).send(&mut con);
+
+                for ch in utils::split_at_line(&text, 8_000) {
+                    let Ok(state) = con.get_state() else { continue };
+                    let _ = state.send_message(
+                        MessageTarget::Client(chid), ch
+                    )
+                    .send(&mut con);
+                }
             }
             _ = tokio::signal::ctrl_c() => { break; }
             _ = sigterm.recv() => { break; }

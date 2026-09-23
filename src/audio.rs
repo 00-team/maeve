@@ -41,7 +41,9 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
 
     let mut err = String::with_capacity(50 * 1024);
     ffmpeg.stderr.unwrap().read_to_string(&mut err).await.unwrap();
-    log::info!("stderr: {err}");
+    if !err.is_empty() {
+        log::info!("ffmpeg err:\n{err}");
+    }
 
     if samples.is_empty() {
         return Err(MaeveError::AudioEncodeFailed);

@@ -133,7 +133,13 @@ impl MaeveState {
     pub async fn current_song(&self) -> Option<Song> {
         let pl = self.playlist.read().await;
         let cx = self.current_playing.load(Ordering::Relaxed);
-        pl.get(cx).cloned()
+        let song = pl.get(cx).cloned()?;
+
+        if song.hash != self.current_hash() {
+            self.current_hash.store(song.hash, Ordering::Relaxed);
+        }
+
+        Some(song)
     }
 
     async fn update_hash(&self) {
@@ -218,8 +224,8 @@ impl MaeveState {
         let _ = self.queued.write().await.pop_front();
     }
 
-    pub async fn queue_add(&self, path: String) {
-        self.queued.write().await.push_back(path);
+    pub async fn queue_add(&self, path: Vec<String>) {
+        self.queued.write().await.extend(path);
         self.queue_notify.notify_one();
     }
 
