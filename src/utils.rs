@@ -25,7 +25,7 @@ pub fn split_at_line(input: &str, max_bytes: usize) -> Vec<&str> {
         }
 
         if let Some(pos) = remaining[..split_at].rfind('\n') {
-            split_at = pos + 1;
+            split_at = pos;
         }
 
         chunks.push(&remaining[..split_at]);
