@@ -179,20 +179,23 @@ impl MaeveState {
         out.push_str("\n\n");
 
         let cx = self.current_index();
-        let pl = self.playlist.read().await;
-        let pl_len = pl.len();
-        for (i, s) in pl.iter().enumerate() {
-            let name = &s.name;
-            if i == cx {
-                out += &format!(
-                    "{} [COLOR=#0fff0f]{i}[/COLOR] [B]{name}[/B]\n",
-                    if self.playing() { ">" } else { "|" }
-                );
-                continue;
-            }
+        let pl_len = {
+            let pl = self.playlist.read().await;
+            let pl_len = pl.len();
+            for (i, s) in pl.iter().enumerate() {
+                let name = &s.name;
+                if i == cx {
+                    out += &format!(
+                        "{} [COLOR=#0fff0f]{i}[/COLOR] [B]{name}[/B]\n",
+                        if self.playing() { ">" } else { "|" }
+                    );
+                    continue;
+                }
 
-            out += &format!("[COLOR=#00ffff]{i}[/COLOR] {name}\n");
-        }
+                out += &format!("[COLOR=#00ffff]{i}[/COLOR] {name}\n");
+            }
+            pl_len
+        };
 
         let q = self.queued.read().await;
         if q.is_empty() {

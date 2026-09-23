@@ -119,6 +119,7 @@ async fn main() -> Result<(), MaeveError> {
             let mut interval = tokio::time::interval(PACKET_DELAY);
             for p in song.packets {
                 if current_hash != state.current_hash() {
+                    log::info!("diff hash");
                     continue 'pll;
                 }
 
@@ -162,8 +163,11 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 };
 
-                let sx = async |s: String| {
-                    let _ = send_text.send((invoker.id, s)).await;
+                let sx = |s: String| {
+                    let Err(e) = send_text.try_send((invoker.id, s)) else {
+                        return;
+                    };
+                    log::error!("failed to send text: {e:?}");
                 };
 
                 match cmd {
@@ -172,54 +176,56 @@ async fn main() -> Result<(), MaeveError> {
                     MaeveCommand::Jump(x) => {
                         state.jump(x).await;
                         if let Some(s) = state.current_song().await {
-                            sx(format!("now playing: {}", s.name)).await;
+                            sx(format!("now playing: {}", s.name));
                         } else {
-                            sx("end of playlist".to_string()).await;
+                            sx("end of playlist".to_string());
                         }
                     }
                     MaeveCommand::Remove(r) => {
                         state.remove_range(r).await;
-                        sx(state.pl_list().await).await;
+                        sx(state.pl_list().await);
                     }
                     MaeveCommand::Sort => {
                         state.sort().await;
-                        sx(state.pl_list().await).await;
+                        sx(state.pl_list().await);
                     }
                     MaeveCommand::Shuffle => {
                         state.shuffle().await;
-                        sx(state.pl_list().await).await;
+                        sx(state.pl_list().await);
                     }
                     MaeveCommand::Loop => {
                         state.loop_cycle();
                         if state.loop_playlist() {
-                            sx("now looping playlist".to_string()).await;
+                            sx("now looping playlist".to_string());
                         } else if state.loop_song() {
-                            sx("now looping song".to_string()).await;
+                            sx("now looping song".to_string());
                         } else {
-                            sx("looping disabled".to_string()).await;
+                            sx("looping disabled".to_string());
                         }
                     }
                     MaeveCommand::Next => state.next().await,
                     MaeveCommand::Past => state.past().await,
                     MaeveCommand::Help => {
-                        sx(MaeveCommand::help().to_string()).await;
+                        sx(MaeveCommand::help().to_string());
                     }
                     MaeveCommand::Add(name) => {
+                        log::info!("adding: {name}");
                         let list = utils::do_ls(&format!("music/{name}"));
                         if list.is_empty() {
                             const ERR: &str =
                                 "[COLOR=#ff0000]NO FILE WAS FOUND[/COLOR]";
-                            sx(format!("using \"{name}\" {ERR}")).await;
+                            sx(format!("using \"{name}\" {ERR}"));
                             return Ok(());
                         }
 
+                        log::info!("adding {} songs from {name}", list.len());
                         for p in list {
                             state.queue_add(p).await;
                         }
 
-                        sx(state.pl_list().await).await;
+                        sx(state.pl_list().await);
                     }
-                    MaeveCommand::List => sx(state.pl_list().await).await,
+                    MaeveCommand::List => sx(state.pl_list().await),
                     MaeveCommand::Clear => state.pl_clear().await,
                     MaeveCommand::QueueClear => state.queue_clear().await,
                 }
