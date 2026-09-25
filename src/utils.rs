@@ -7,7 +7,9 @@ pub fn do_ls(arg: &str) -> Vec<String> {
         .expect("failed to execute find");
 
     let output = String::from_utf8_lossy(&output.stdout);
-    let files: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+    let mut files: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+
+    files.sort();
 
     files
 }
