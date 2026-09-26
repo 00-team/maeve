@@ -23,38 +23,34 @@ impl MaeveCommand {
         "
 Maeve commands:
 
-!add <song-query> -- use like music/fadaei*
-!jump <index>
-!remove <index> | <start>..<end>
-!play -- toggle playing
-!pause
-!next
-!past
-!list
-!clear -- this will clear the list
-!queue-clear this will clear the queue
-!shuffle
-!sort
-!loop -- toggle between playlist loop, song loop, and no loop
+a | add <song-query> -- use like music/fadaei*
+j | jump <index>
+r | remove <index> | <start>..<end>
+> | play -- toggle playing
+= | pause
+n | next
+p | past
+l | list
+clear -- this will clear the list
+queue-clear this will clear the queue
+shuffle
+sort
+loop -- toggle between playlist loop, song loop, and no loop
 
 [COLOR=#FFD700]made by ostad 007[/COLOR]
         "
     }
 
     pub fn parse_str(value: &str) -> Option<Self> {
-        if !value.starts_with('!') {
-            return None;
-        }
-
-        let mut it = value[1..].splitn(2, ' ');
+        let mut it = value.splitn(2, ' ');
         let cmd = it.next()?;
 
         Some(match cmd {
-            "add" => Self::Add(it.next()?.to_string()),
-            "play" => Self::Play,
-            "pause" => Self::Pause,
-            "jump" => Self::Jump(it.next()?.parse().ok()?),
-            "remove" => {
+            "add" | "a" => Self::Add(it.next()?.to_string()),
+            "play" | ">" => Self::Play,
+            "pause" | "=" => Self::Pause,
+            "jump" | "j" => Self::Jump(it.next()?.parse().ok()?),
+            "remove" | "r" => {
                 let mut it = it.next()?.splitn(2, "..");
                 let start = it.next()?.parse::<usize>().ok()?;
                 let end = it.next().and_then(|v| v.parse::<usize>().ok());
@@ -66,16 +62,16 @@ Maeve commands:
 
                 Self::Remove(range)
             }
-            "help" => Self::Help,
-            "next" => Self::Next,
-            "past" => Self::Past,
-            "list" => Self::List,
+            "help" | "h" => Self::Help,
+            "next" | "n" => Self::Next,
+            "past" | "p" => Self::Past,
+            "list" | "l" => Self::List,
             "clear" => Self::Clear,
             "queue-clear" => Self::QueueClear,
             "shuffle" => Self::Shuffle,
             "sort" => Self::Sort,
             "loop" => Self::Loop,
-            _ => return None,
+            _ => Self::Help,
         })
     }
 }
