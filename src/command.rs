@@ -26,7 +26,7 @@ Maeve commands:
 a | add <song-query> -- use like music/fadaei*
 j | jump <index>
 r | remove <index> | <start>..<end>
-> | play -- toggle playing
+c | play -- toggle playing
 = | pause
 n | next
 p | past
@@ -47,7 +47,7 @@ loop -- toggle between playlist loop, song loop, and no loop
 
         Some(match cmd {
             "add" | "a" => Self::Add(it.next()?.to_string()),
-            "play" | ">" => Self::Play,
+            "play" | "c" => Self::Play,
             "pause" | "=" => Self::Pause,
             "jump" | "j" => Self::Jump(it.next()?.parse().ok()?),
             "remove" | "r" => {
