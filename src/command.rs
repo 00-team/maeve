@@ -10,7 +10,11 @@ pub enum MaeveCommand {
     Help,
     Next,
     Past,
-    List,
+    List(Option<Range<usize>>),
+    Queue,
+    Info,
+    Seek(u64),
+    Dedup,
     Clear,
     QueueClear,
     Shuffle,
@@ -30,7 +34,11 @@ c | play -- toggle playing
 = | pause
 n | next
 p | past
-l | list
+l | list <page> | <start>..<end> | a | all
+q | queue
+i | info
+s | seek <minutes>m <secs>
+dedup -- remove duplicate songs from the list and queue
 clear -- this will clear the list
 queue-clear this will clear the queue
 shuffle
@@ -65,7 +73,45 @@ loop -- toggle between playlist loop, song loop, and no loop
             "help" | "h" => Self::Help,
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,
-            "list" | "l" => Self::List,
+            "queue" | "q" => Self::Queue,
+            "list" | "l" => {
+                let Some(args) = it.next() else {
+                    return Some(Self::List(None));
+                };
+
+                if matches!(args, "a" | "all") {
+                    return Some(Self::List(Some(0..2048)));
+                }
+
+                let mut it = args.splitn(2, "..");
+                let start = it.next()?.parse::<usize>().ok()?;
+                let end = it.next().and_then(|v| v.parse::<usize>().ok());
+                let range = if let Some(end) = end {
+                    start.min(end)..start.max(end) + 1
+                } else {
+                    start * 10..(start + 1) * 10
+                };
+
+                Self::List(Some(range))
+            }
+            "info" | "i" => Self::Info,
+            "seek" | "s" => {
+                let Some(args) = it.next() else {
+                    return Some(Self::Seek(0));
+                };
+
+                let mut total_secs = 0u64;
+                for s in args.splitn(2, ' ') {
+                    total_secs += if let Some(m) = s.strip_suffix('m') {
+                        m.parse::<u64>().ok()? * 60
+                    } else {
+                        s.parse::<u64>().ok()?
+                    };
+                }
+
+                Self::Seek(total_secs)
+            }
+            "dedup" => Self::Dedup,
             "clear" => Self::Clear,
             "queue-clear" => Self::QueueClear,
             "shuffle" => Self::Shuffle,

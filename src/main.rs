@@ -21,7 +21,7 @@ use crate::{
 };
 
 // const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
-const PACKET_DELAY: Duration = Duration::from_micros(20000);
+pub const PACKET_DELAY: Duration = Duration::from_micros(20000);
 
 #[tokio::main]
 async fn main() -> Result<(), MaeveError> {
@@ -113,9 +113,12 @@ async fn main() -> Result<(), MaeveError> {
             // let _ = send_text.send(format!("now playing: {name}")).await;
 
             let mut interval = tokio::time::interval(PACKET_DELAY);
-            for p in song.packets {
+            while state.current_packet() < song.packets.len() {
+                let p = song.packets[state.current_packet_and_next()].clone();
+
                 if current_hash != state.current_hash() {
                     log::info!("diff hash");
+                    state.set_current_packet(0);
                     continue 'pll;
                 }
 
@@ -129,6 +132,7 @@ async fn main() -> Result<(), MaeveError> {
                 interval.tick().await;
                 let _ = send_audio.send(p).await;
             }
+            state.set_current_packet(0);
 
             if !state.loop_song() {
                 state.next().await;
@@ -178,16 +182,16 @@ async fn main() -> Result<(), MaeveError> {
                         }
                     }
                     MaeveCommand::Remove(r) => {
-                        state.remove_range(r).await;
-                        sx(state.pl_list().await);
+                        let range = state.remove_range(r).await;
+                        sx(format!("removed {range:?} = {}", range.len()));
                     }
                     MaeveCommand::Sort => {
                         state.sort().await;
-                        sx(state.pl_list().await);
+                        sx(state.pl_list(Some(1..999)).await);
                     }
                     MaeveCommand::Shuffle => {
                         state.shuffle().await;
-                        sx(state.pl_list().await);
+                        sx(state.pl_list(Some(1..999)).await);
                     }
                     MaeveCommand::Loop => {
                         state.loop_cycle();
@@ -216,11 +220,15 @@ async fn main() -> Result<(), MaeveError> {
 
                         log::info!("adding {} songs from {name}", list.len());
                         state.queue_add(list).await;
-                        sx(state.pl_list().await);
+                        sx(state.q_list().await);
                     }
-                    MaeveCommand::List => sx(state.pl_list().await),
+                    MaeveCommand::List(r) => sx(state.pl_list(r).await),
+                    MaeveCommand::Queue => sx(state.q_list().await),
                     MaeveCommand::Clear => state.pl_clear().await,
                     MaeveCommand::QueueClear => state.queue_clear().await,
+                    MaeveCommand::Info => sx(state.info().await),
+                    MaeveCommand::Dedup => state.dedup().await,
+                    MaeveCommand::Seek(secs) => state.seek(secs),
                 }
             }
 

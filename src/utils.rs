@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{process::Command, time::Duration};
 
 pub fn do_ls(arg: &str) -> Vec<String> {
     let output = Command::new("find")
@@ -7,7 +7,8 @@ pub fn do_ls(arg: &str) -> Vec<String> {
         .expect("failed to execute find");
 
     let output = String::from_utf8_lossy(&output.stdout);
-    let mut files: Vec<String> = output.lines().map(|s| s.to_string()).collect();
+    let mut files: Vec<String> =
+        output.lines().map(|s| s.to_string()).collect();
 
     files.sort();
 
@@ -39,4 +40,12 @@ pub fn split_at_line(input: &str, max_bytes: usize) -> Vec<&str> {
     }
 
     chunks
+}
+
+pub fn fmt_dur(d: Duration) -> String {
+    let secs = d.as_secs();
+    let mins = secs / 60;
+    let secs = secs % 60;
+
+    format!("{mins:02}\u{200B}:\u{200B}{secs:02}")
 }
