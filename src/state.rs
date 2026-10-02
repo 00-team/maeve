@@ -210,15 +210,6 @@ impl MaeveState {
 
     pub async fn pl_list(&self, range: Option<Range<usize>>) -> String {
         let mut out = String::with_capacity(1024);
-        out += &format!("\ncurrent playlist: {range:?}\n");
-
-        if self.loop_playlist() {
-            out.push_str("> looping playlist");
-        } else if self.loop_song() {
-            out.push_str("> looping current song");
-        }
-
-        out.push_str("\n\n");
 
         let cx = self.current_index();
         let pl = self.playlist.read().await;
@@ -237,6 +228,16 @@ impl MaeveState {
             let s = if end - s < 10 { end.saturating_sub(10) } else { s };
             s..end
         };
+
+        out += &format!("\ncurrent playlist: {range:?}\n");
+
+        if self.loop_playlist() {
+            out.push_str("> looping playlist");
+        } else if self.loop_song() {
+            out.push_str("> looping current song");
+        }
+
+        out.push_str("\n\n");
 
         let offset = range.start;
         for (i, s) in pl[range].iter().enumerate() {
