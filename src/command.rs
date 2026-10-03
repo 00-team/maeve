@@ -14,6 +14,7 @@ pub enum MaeveCommand {
     Queue,
     Info,
     Seek(u64),
+    Find(String),
     Dedup,
     Clear,
     QueueClear,
@@ -38,6 +39,7 @@ l | list <page> | <start>..<end> | a | all
 q | queue
 i | info
 s | seek <minutes>m <secs>
+f | find <name>
 dedup -- remove duplicate songs from the list and queue
 clear -- this will clear the list
 queue-clear this will clear the queue
@@ -71,6 +73,7 @@ loop -- toggle between playlist loop, song loop, and no loop
                 Self::Remove(range)
             }
             "help" | "h" => Self::Help,
+            "find" | "f" => Self::Find(it.next()?.to_string()),
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,
             "queue" | "q" => Self::Queue,

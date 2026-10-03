@@ -127,9 +127,9 @@ impl MaeveState {
         pl.drain(range.clone());
         let cdx = self.current_index();
         if range.contains(&cdx) {
-            self.current_playing.store(range.start, Ordering::Relaxed);
+            self.current_playing.store(range.start, Ordering::SeqCst);
         } else if cdx > range.end {
-            self.current_playing.fetch_sub(range.len(), Ordering::Relaxed);
+            self.current_playing.fetch_sub(range.len(), Ordering::SeqCst);
         }
         self.update_hash().await;
         self.current_notify.notify_one();
@@ -213,6 +213,7 @@ impl MaeveState {
 
         let cx = self.current_index();
         let pl = self.playlist.read().await;
+        let cx = cx.min(pl.len().saturating_sub(1));
 
         let range = if let Some(range) = range {
             if range.end == 999 && range.start == 0 {
@@ -255,6 +256,37 @@ impl MaeveState {
             }
 
             out += &format!("[COLOR=#00ffff]{ci}[/COLOR] {name} | {tt_dur}\n");
+        }
+
+        out
+    }
+
+    pub async fn find(&self, name: String) -> String {
+        let mut out = String::with_capacity(1024);
+
+        let cx = self.current_index();
+        let pl = self.playlist.read().await;
+
+        out += &format!("\nfinding [B]\"{name}\"[/B] in playlist\n\n");
+        let name_bold = format!("[B]{name}[/B]");
+
+        for (i, s) in pl.iter().enumerate() {
+            if !s.name.contains(&name) {
+                continue;
+            }
+            let sname = s.name.replace(&name, &name_bold);
+            let tt_dur = fmt_dur(s.duration());
+
+            if i == cx {
+                let pp_dur = fmt_dur(self.current_duration());
+                out += &format!(
+                    "{} [COLOR=#0fff0f]{i}[/COLOR] {sname} {pp_dur}/{tt_dur}\n",
+                    if self.playing() { ">" } else { "|" }
+                );
+                continue;
+            }
+
+            out += &format!("[COLOR=#00ffff]{i}[/COLOR] {sname} | {tt_dur}\n");
         }
 
         out
@@ -332,7 +364,15 @@ impl MaeveState {
 
     pub async fn dedup(&self) {
         let mut saw = HashSet::with_capacity(1024);
-        self.playlist.write().await.retain(|s| saw.insert(s.name.clone()));
-        self.queued.write().await.retain(|s| saw.insert(s.clone()));
+
+        fn fname(path: &str) -> String {
+            path.rsplit('/')
+                .next()
+                .map(|v| v.to_lowercase())
+                .unwrap_or_default()
+        }
+
+        self.playlist.write().await.retain(|s| saw.insert(fname(&s.name)));
+        self.queued.write().await.retain(|s| saw.insert(fname(s)));
     }
 }

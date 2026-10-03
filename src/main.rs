@@ -50,6 +50,12 @@ async fn main() -> Result<(), MaeveError> {
                     adst.queue_pop_front().await;
                     continue;
                 };
+
+                let name = name
+                    .strip_prefix("music/")
+                    .map(|v| v.to_string())
+                    .unwrap_or(name);
+
                 adst.add_song(state::Song {
                     hash: Song::hash(&name, packets.len()),
                     name,
@@ -188,6 +194,9 @@ async fn main() -> Result<(), MaeveError> {
                     MaeveCommand::Sort => {
                         state.sort().await;
                         sx(state.pl_list(Some(1..999)).await);
+                    }
+                    MaeveCommand::Find(name) => {
+                        sx(state.find(name).await);
                     }
                     MaeveCommand::Shuffle => {
                         state.shuffle().await;
