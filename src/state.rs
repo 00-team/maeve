@@ -202,7 +202,11 @@ impl MaeveState {
     }
 
     pub async fn past(&self) {
-        self.current_playing.fetch_sub(1, Ordering::Relaxed);
+        let cx = self.current_index();
+        if cx == 0 {
+            return;
+        }
+        self.current_playing.store(cx - 1, Ordering::Relaxed);
         self.current_notify.notify_one();
         self.update_hash().await;
     }
@@ -271,7 +275,7 @@ impl MaeveState {
             s..end
         };
 
-        out += &format!("\ncurrent playlist: {range:?}\n");
+        out += &format!("\ncurrent playlist: {range:?} | {pll}\n");
 
         if self.loop_playlist() {
             out.push_str("> looping playlist");
@@ -279,7 +283,7 @@ impl MaeveState {
             out.push_str("> looping current song");
         }
 
-        out.push_str("\n\n");
+        out.push_str("\n");
 
         let offset = range.start;
         for (i, s) in pl.songs[range].iter().enumerate() {
