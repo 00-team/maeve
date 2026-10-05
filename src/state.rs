@@ -128,7 +128,7 @@ impl MaeveState {
         let cdx = self.current_index();
         if range.contains(&cdx) {
             self.current_playing.store(range.start, Ordering::SeqCst);
-        } else if cdx > range.end {
+        } else if cdx >= range.end {
             self.current_playing.fetch_sub(range.len(), Ordering::SeqCst);
         }
         self.update_hash().await;
