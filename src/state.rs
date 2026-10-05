@@ -352,7 +352,7 @@ impl MaeveState {
         let pl = self.playlist.read().await;
         let q_len = self.queued.read().await.len();
         out += &format!(
-            "playlist:\n    count: {}\n    size: {}\n    duration: {:?}\n\n",
+            "playlist:\n    count: {}\n    size: {}\n    duration: {}\n\n",
             pl.songs.len(),
             fmt_megabytes(pl.size),
             fmt_dur(pl.duration)
