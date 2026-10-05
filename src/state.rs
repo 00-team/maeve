@@ -262,6 +262,7 @@ impl MaeveState {
     }
 
     pub async fn find(&self, name: String) -> String {
+        let name = name.to_lowercase();
         let mut out = String::with_capacity(1024);
 
         let cx = self.current_index();
@@ -271,10 +272,11 @@ impl MaeveState {
         let name_bold = format!("[B]{name}[/B]");
 
         for (i, s) in pl.iter().enumerate() {
-            if !s.name.contains(&name) {
+            let sname = s.name.to_lowercase();
+            if !sname.to_lowercase().contains(&name) {
                 continue;
             }
-            let sname = s.name.replace(&name, &name_bold);
+            let sname = sname.replace(&name, &name_bold);
             let tt_dur = fmt_dur(s.duration());
 
             if i == cx {
