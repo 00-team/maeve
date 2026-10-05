@@ -44,8 +44,30 @@ pub fn split_at_line(input: &str, max_bytes: usize) -> Vec<&str> {
 
 pub fn fmt_dur(d: Duration) -> String {
     let secs = d.as_secs();
-    let mins = secs / 60;
+
+    let hours = secs / 3600;
+    let mins = (secs % 3600) / 60;
     let secs = secs % 60;
 
-    format!("{mins:02}\u{200B}:\u{200B}{secs:02}")
+    let ms = format!("{mins:02}\u{200B}:\u{200B}{secs:02}");
+    if hours > 0 {
+        return format!("{hours:02}\u{200B}:\u{200B}{ms}");
+    }
+
+    ms
+}
+
+pub fn fmt_megabytes(bytes: usize) -> String {
+    let mb = bytes / (1024 * 1024);
+
+    let mut result = String::new();
+    for (i, c) in mb.to_string().chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.push(',');
+        }
+        result.push(c);
+    }
+
+    let cm = result.chars().rev().collect::<String>();
+    format!("{cm} MB")
 }

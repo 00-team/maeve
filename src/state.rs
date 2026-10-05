@@ -11,13 +11,14 @@ use tokio::sync::{Notify, RwLock};
 use tsproto_packets::packets::OutPacket;
 
 use crate::PACKET_DELAY;
-use crate::utils::fmt_dur;
+use crate::utils::{fmt_dur, fmt_megabytes};
 
 #[derive(Clone)]
 pub struct Song {
     pub packets: Vec<OutPacket>,
     pub name: String,
     pub hash: u64,
+    pub size: usize,
 }
 
 impl Song {
@@ -35,6 +36,48 @@ impl Song {
     }
 }
 
+#[derive(Default)]
+pub struct Playlist {
+    songs: Vec<Song>,
+    size: usize,
+    duration: Duration,
+}
+
+impl Playlist {
+    fn add_song(&mut self, song: Song) {
+        self.size += song.size;
+        self.duration += song.duration();
+        self.songs.push(song);
+    }
+
+    fn clear(&mut self) {
+        self.songs.clear();
+        self.size = 0;
+        self.duration = Default::default();
+    }
+
+    fn drain(&mut self, range: Range<usize>) {
+        let range = range.start..self.songs.len().min(range.end);
+        self.songs.drain(range.clone());
+
+        self.size = 0;
+        self.duration = Default::default();
+
+        for s in self.songs.iter() {
+            self.size += s.size;
+            self.duration += s.duration();
+        }
+    }
+
+    fn shuffle(&mut self) {
+        self.songs.shuffle(&mut rand::rng());
+    }
+
+    fn sort(&mut self) {
+        self.songs.sort_by_key(|s| s.name.clone());
+    }
+}
+
 pub struct MaeveState {
     playing: AtomicBool,
     playing_notify: Notify,
@@ -42,7 +85,7 @@ pub struct MaeveState {
     current_packet: AtomicUsize,
     current_hash: AtomicU64,
     current_notify: Notify,
-    playlist: RwLock<Vec<Song>>,
+    playlist: RwLock<Playlist>,
     queued: RwLock<VecDeque<String>>,
     queue_notify: Notify,
     loop_playlist: AtomicBool,
@@ -117,20 +160,20 @@ impl MaeveState {
     }
 
     pub async fn add_song(&self, song: Song) {
-        self.playlist.write().await.push(song);
+        self.playlist.write().await.add_song(song);
         self.current_notify.notify_one();
     }
 
     pub async fn remove_range(&self, range: Range<usize>) -> Range<usize> {
-        let mut pl = self.playlist.write().await;
-        let range = range.start..pl.len().min(range.end);
-        pl.drain(range.clone());
+        self.playlist.write().await.drain(range.clone());
+
         let cdx = self.current_index();
         if range.contains(&cdx) {
             self.current_playing.store(range.start, Ordering::SeqCst);
         } else if cdx >= range.end {
-            self.current_playing.fetch_sub(range.len(), Ordering::SeqCst);
+            self.current_playing.store(cdx.saturating_sub(1), Ordering::SeqCst);
         }
+
         self.update_hash().await;
         self.current_notify.notify_one();
 
@@ -138,13 +181,11 @@ impl MaeveState {
     }
 
     pub async fn shuffle(&self) {
-        let mut pl = self.playlist.write().await;
-        pl.shuffle(&mut rand::rng());
+        self.playlist.write().await.shuffle();
     }
 
     pub async fn sort(&self) {
-        let mut pl = self.playlist.write().await;
-        pl.sort_by_key(|s| s.name.clone());
+        self.playlist.write().await.sort();
     }
 
     pub async fn jump(&self, index: usize) {
@@ -167,9 +208,8 @@ impl MaeveState {
     }
 
     pub async fn current_song(&self) -> Option<Song> {
-        let pl = self.playlist.read().await;
         let cx = self.current_playing.load(Ordering::Relaxed);
-        let song = pl.get(cx).cloned()?;
+        let song = self.playlist.read().await.songs.get(cx).cloned()?;
 
         if song.hash != self.current_hash() {
             self.current_hash.store(song.hash, Ordering::Relaxed);
@@ -213,19 +253,20 @@ impl MaeveState {
 
         let cx = self.current_index();
         let pl = self.playlist.read().await;
-        let cx = cx.min(pl.len().saturating_sub(1));
+        let pll = pl.songs.len();
+        let cx = cx.min(pll.saturating_sub(1));
 
         let range = if let Some(range) = range {
             if range.end == 999 && range.start == 0 {
-                0..pl.len()
+                0..pll
             } else {
-                let end = range.end.min(pl.len());
+                let end = range.end.min(pll);
                 let start = range.start.min(end.saturating_sub(1));
                 start..end
             }
         } else {
             let s = cx.saturating_sub(4);
-            let end = (s + 10).min(pl.len());
+            let end = (s + 10).min(pll);
             let s = if end - s < 10 { end.saturating_sub(10) } else { s };
             s..end
         };
@@ -241,7 +282,7 @@ impl MaeveState {
         out.push_str("\n\n");
 
         let offset = range.start;
-        for (i, s) in pl[range].iter().enumerate() {
+        for (i, s) in pl.songs[range].iter().enumerate() {
             let name = &s.name;
             let ci = offset + i;
             let tt_dur = fmt_dur(s.duration());
@@ -271,7 +312,7 @@ impl MaeveState {
         out += &format!("\nfinding [B]\"{name}\"[/B] in playlist\n\n");
         let name_bold = format!("[B]{name}[/B]");
 
-        for (i, s) in pl.iter().enumerate() {
+        for (i, s) in pl.songs.iter().enumerate() {
             let sname = s.name.to_lowercase();
             if !sname.to_lowercase().contains(&name) {
                 continue;
@@ -304,9 +345,18 @@ impl MaeveState {
             out.push_str("> looping current song");
         }
 
-        let pl_len = self.playlist.read().await.len();
+        let pl = self.playlist.read().await;
         let q_len = self.queued.read().await.len();
-        out += &format!("playlist: {pl_len}\nqueue: {q_len}\n");
+        out += &format!(
+            "playlist:\n    count: {}\n    size: {}\n    duration: {:?}\n\n",
+            pl.songs.len(),
+            fmt_megabytes(pl.size),
+            fmt_dur(pl.duration)
+        );
+
+        if q_len != 0 {
+            out += &format!("queue: [COLOR=#FF69B4]{q_len}[/COLOR]\n");
+        }
 
         if let Some(cs) = self.current_song().await {
             let ci = self.current_index();
@@ -327,7 +377,7 @@ impl MaeveState {
         let mut out = String::with_capacity(1024);
         out += "\nqueue:\n\n";
 
-        let pl_len = self.playlist.read().await.len();
+        let pl_len = self.playlist.read().await.songs.len();
         let q = self.queued.read().await;
         if q.is_empty() {
             return out;
@@ -374,7 +424,20 @@ impl MaeveState {
                 .unwrap_or_default()
         }
 
-        self.playlist.write().await.retain(|s| saw.insert(fname(&s.name)));
+        let mut plsize = 0usize;
+        let mut pdur = Duration::default();
+        let mut pl = self.playlist.write().await;
+        pl.songs.retain(|s| {
+            let v = saw.insert(fname(&s.name));
+            if v {
+                plsize += s.size;
+                pdur += s.duration();
+            }
+            v
+        });
+        pl.size = plsize;
+        pl.duration = pdur;
+
         self.queued.write().await.retain(|s| saw.insert(fname(s)));
     }
 }

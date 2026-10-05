@@ -51,6 +51,8 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 };
 
+                let size = packets.iter().map(|p| p.data().len()).sum();
+
                 let name = name
                     .strip_prefix("music/")
                     .map(|v| v.to_string())
@@ -60,6 +62,7 @@ async fn main() -> Result<(), MaeveError> {
                     hash: Song::hash(&name, packets.len()),
                     name,
                     packets,
+                    size,
                 })
                 .await;
                 adst.queue_pop_front().await;
@@ -176,16 +179,20 @@ async fn main() -> Result<(), MaeveError> {
                     log::error!("failed to send text: {e:?}");
                 };
 
+                let ssc = async || {
+                    if let Some(s) = state.current_song().await {
+                        sx(format!("now playing: {}", s.name));
+                    } else {
+                        sx("end of playlist".to_string());
+                    }
+                };
+
                 match cmd {
                     MaeveCommand::Play => state.play(),
                     MaeveCommand::Pause => state.pause(),
                     MaeveCommand::Jump(x) => {
                         state.jump(x).await;
-                        if let Some(s) = state.current_song().await {
-                            sx(format!("now playing: {}", s.name));
-                        } else {
-                            sx("end of playlist".to_string());
-                        }
+                        ssc().await;
                     }
                     MaeveCommand::Remove(r) => {
                         let range = state.remove_range(r).await;
@@ -212,8 +219,14 @@ async fn main() -> Result<(), MaeveError> {
                             sx("looping disabled".to_string());
                         }
                     }
-                    MaeveCommand::Next => state.next().await,
-                    MaeveCommand::Past => state.past().await,
+                    MaeveCommand::Next => {
+                        state.next().await;
+                        ssc().await;
+                    }
+                    MaeveCommand::Past => {
+                        state.past().await;
+                        ssc().await;
+                    }
                     MaeveCommand::Help => {
                         sx(MaeveCommand::help().to_string());
                     }
