@@ -25,6 +25,25 @@ pub struct Song {
 }
 
 impl Song {
+    pub fn from_cache(
+        packets: u64, size: usize, path: PathBuf, name: &str,
+    ) -> Self {
+        let name = name
+            .strip_prefix("music/")
+            .map(|v| v.to_string())
+            .unwrap_or(name.to_string());
+
+        Self {
+            hash: Self::hash(&name, size),
+            name,
+            path,
+            size,
+            duration: Duration::from_millis(
+                packets * PACKET_DELAY.as_millis() as u64,
+            ),
+        }
+    }
+
     pub fn hash(name: &str, size: usize) -> u64 {
         let mut hashar = DefaultHasher::default();
         name.hash(&mut hashar);
@@ -352,15 +371,16 @@ impl MaeveState {
             out.push_str("> looping current song");
         }
 
-        let pl = self.playlist.read().await;
         let q_len = self.queued.read().await.len();
-        out += &format!(
-            "playlist:\n    count: {}\n    size: {}\n    duration: {}\n\n",
-            pl.songs.len(),
-            fmt_megabytes(pl.size),
-            fmt_dur(pl.duration)
-        );
-
+        {
+            let pl = self.playlist.read().await;
+            out += &format!(
+                "playlist:\n    count: {}\n    size: {}\n    duration: {}\n\n",
+                pl.songs.len(),
+                fmt_megabytes(pl.size),
+                fmt_dur(pl.duration)
+            );
+        }
         if q_len != 0 {
             out += &format!("queue: [COLOR=#FF69B4]{q_len}[/COLOR]\n");
         }
@@ -422,14 +442,8 @@ impl MaeveState {
                 continue;
             };
 
-            self.add_song(Song {
-                hash: Song::hash(&p, mah.size),
-                name: p,
-                size: mah.size,
-                duration: mah.duration,
-                path: cf,
-            })
-            .await;
+            self.add_song(Song::from_cache(mah.packets, mah.size, cf, &p))
+                .await;
         }
 
         self.queued.write().await.extend(nq);

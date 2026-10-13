@@ -2,12 +2,11 @@ use std::{
     io::{Read, Write},
     path::Path,
     process::Stdio,
-    time::Duration,
 };
 use tokio::{io::AsyncReadExt, process::Command};
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
-use crate::{MaeveError, PACKET_DELAY, state::Song};
+use crate::{MaeveError, state::Song};
 
 pub struct MaeveAudio {
     chunks: Vec<u32>,
@@ -88,7 +87,7 @@ impl MaeveAudio {
 }
 
 pub struct MaeveAudioHead {
-    pub duration: Duration,
+    pub packets: u64,
     pub size: usize,
 }
 
@@ -105,11 +104,7 @@ impl MaeveAudioHead {
         file.read_exact(&mut opus_len)?;
         let opus_len = u64::from_le_bytes(opus_len) as usize;
 
-        let duration = Duration::from_millis(
-            (chunks_len / 4) as u64 * PACKET_DELAY.as_millis() as u64,
-        );
-
-        Ok(Self { duration, size: opus_len })
+        Ok(Self { packets: chunks_len as u64 / 4, size: opus_len })
     }
 }
 
@@ -202,14 +197,5 @@ pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
     audio.save(&cf)?;
     let size = audio.opus.len();
 
-    let name = path
-        .strip_prefix("music/")
-        .map(|v| v.to_string())
-        .unwrap_or(path.to_string());
-
-    let duration = Duration::from_millis(
-        audio.chunks.len() as u64 * PACKET_DELAY.as_millis() as u64,
-    );
-
-    Ok(Song { path: cf, hash: Song::hash(&name, size), name, duration, size })
+    Ok(Song::from_cache(audio.chunks.len() as u64, size, cf, path))
 }

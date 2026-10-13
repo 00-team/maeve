@@ -252,14 +252,22 @@ async fn main() -> Result<(), MaeveError> {
                 }
             }
             send_text = recv_text.recv() => {
-                let Some((chid, text)) = send_text else { continue };
+                let Some((chid, text)) = send_text else {
+                    log::warn!("no text");
+                    continue;
+                };
 
                 for ch in utils::split_at_line(&text, 8_000) {
-                    let Ok(state) = con.get_state() else { continue };
-                    let _ = state.send_message(
+                    let Ok(state) = con.get_state() else {
+                        log::warn!("no state");
+                        continue;
+                    };
+                    if let Err(e) = state.send_message(
                         MessageTarget::Client(chid), ch
                     )
-                    .send(&mut con);
+                    .send(&mut con) {
+                        log::warn!("send msg failed: {e:?}");
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => { break; }
