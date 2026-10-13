@@ -21,7 +21,6 @@ pub struct Song {
     pub path: PathBuf,
     pub hash: u64,
     pub size: usize,
-    pub capacity: usize,
     pub duration: Duration,
 }
 
@@ -38,14 +37,12 @@ impl Song {
 pub struct Playlist {
     songs: Vec<Song>,
     size: usize,
-    capacity: usize,
     duration: Duration,
 }
 
 impl Playlist {
     fn add_song(&mut self, song: Song) {
         self.size += song.size;
-        self.capacity += song.capacity;
         self.duration += song.duration;
         self.songs.push(song);
     }
@@ -53,7 +50,6 @@ impl Playlist {
     fn clear(&mut self) {
         self.songs.clear();
         self.size = 0;
-        self.capacity = 0;
         self.duration = Default::default();
     }
 
@@ -62,12 +58,10 @@ impl Playlist {
         self.songs.drain(range.clone());
 
         self.size = 0;
-        self.capacity = 0;
         self.duration = Default::default();
 
         for s in self.songs.iter() {
             self.size += s.size;
-            self.capacity += s.capacity;
             self.duration += s.duration;
         }
     }
@@ -361,10 +355,9 @@ impl MaeveState {
         let pl = self.playlist.read().await;
         let q_len = self.queued.read().await.len();
         out += &format!(
-            "playlist:\n    count: {}\n    size: {} / {}\n    duration: {}\n\n",
+            "playlist:\n    count: {}\n    size: {}\n    duration: {}\n\n",
             pl.songs.len(),
             fmt_megabytes(pl.size),
-            fmt_megabytes(pl.capacity),
             fmt_dur(pl.duration)
         );
 
@@ -413,7 +406,7 @@ impl MaeveState {
     }
 
     pub async fn queue_add(&self, paths: Vec<String>) {
-        let cache_dir = Path::new("maeve_cache");
+        let cache_dir = Path::new("cache");
 
         let mut nq = Vec::with_capacity(paths.len());
 
@@ -435,7 +428,6 @@ impl MaeveState {
                 size: mah.size,
                 duration: mah.duration,
                 path: cf,
-                capacity: 0,
             })
             .await;
         }
@@ -466,20 +458,17 @@ impl MaeveState {
         }
 
         let mut plsize = 0usize;
-        let mut plcap = 0usize;
         let mut pdur = Duration::default();
         let mut pl = self.playlist.write().await;
         pl.songs.retain(|s| {
             let v = saw.insert(fname(&s.name));
             if v {
                 plsize += s.size;
-                plcap += s.capacity;
                 pdur += s.duration;
             }
             v
         });
         pl.size = plsize;
-        pl.capacity = plcap;
         pl.duration = pdur;
 
         self.queued.write().await.retain(|s| saw.insert(fname(s)));

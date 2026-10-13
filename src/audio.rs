@@ -114,7 +114,7 @@ impl MaeveAudioHead {
 }
 
 pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
-    let cache_dir = Path::new("maeve_cache");
+    let cache_dir = Path::new("cache");
     let ffmpeg = Command::new("taskset")
         .args(&[
             "-c",
@@ -178,13 +178,14 @@ pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
 
     for chunk in samples.chunks(FRAME_SIZE * 2) {
         let clen = chunk.len();
+        pcm_in_be[clen..].fill(0);
         pcm_in_be[..clen].copy_from_slice(chunk);
         // let clen = chunk.len();
         // for (i, d) in chunk.iter().enumerate() {
         //     // pcm_in_be[i] = (*d as f32 * 0.5) as i16;
         //     pcm_in_be[i] = *d;
         // }
-        let len = encoder.encode(&pcm_in_be[..clen], &mut opus_pkt).unwrap();
+        let len = encoder.encode(&pcm_in_be, &mut opus_pkt).unwrap();
 
         audio.chunks.push(len as u32);
         audio.opus.extend_from_slice(&opus_pkt[..len]);
@@ -210,12 +211,5 @@ pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
         audio.chunks.len() as u64 * PACKET_DELAY.as_millis() as u64,
     );
 
-    Ok(Song {
-        path: cf,
-        hash: Song::hash(&name, size),
-        name,
-        duration,
-        size,
-        capacity: 0,
-    })
+    Ok(Song { path: cf, hash: Song::hash(&name, size), name, duration, size })
 }
