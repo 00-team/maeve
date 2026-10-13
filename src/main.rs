@@ -15,10 +15,7 @@ mod utils;
 
 pub use error::MaeveError;
 
-use crate::{
-    command::MaeveCommand,
-    state::{MaeveState, Song},
-};
+use crate::{command::MaeveCommand, state::MaeveState};
 
 // const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
 pub const PACKET_DELAY: Duration = Duration::from_micros(20000);
@@ -46,25 +43,12 @@ async fn main() -> Result<(), MaeveError> {
                     continue;
                 };
 
-                let Ok(packets) = audio::audio_render(&name).await else {
+                let Ok(song) = audio::audio_render(&name).await else {
                     adst.queue_pop_front().await;
                     continue;
                 };
 
-                let size = packets.iter().map(|p| p.data().len()).sum();
-
-                let name = name
-                    .strip_prefix("music/")
-                    .map(|v| v.to_string())
-                    .unwrap_or(name);
-
-                adst.add_song(state::Song {
-                    hash: Song::hash(&name, packets.len()),
-                    name,
-                    packets,
-                    size,
-                })
-                .await;
+                adst.add_song(song).await;
                 adst.queue_pop_front().await;
             }
         });
@@ -103,7 +87,7 @@ async fn main() -> Result<(), MaeveError> {
     tokio::spawn(async move {
         let state = ps;
         'pll: loop {
-            let Some(song) = state.current_song().await else {
+            let Some((song, audio)) = state.current_song_audio().await else {
                 log::info!("no more song");
 
                 if state.current_index() > 0 && state.loop_playlist() {
@@ -115,6 +99,7 @@ async fn main() -> Result<(), MaeveError> {
                 state.current_notified().await;
                 continue;
             };
+            let packets = audio.to_packets();
             let current_hash = song.hash;
 
             let name = song.name.clone();
@@ -122,8 +107,8 @@ async fn main() -> Result<(), MaeveError> {
             // let _ = send_text.send(format!("now playing: {name}")).await;
 
             let mut interval = tokio::time::interval(PACKET_DELAY);
-            while state.current_packet() < song.packets.len() {
-                let p = song.packets[state.current_packet_and_next()].clone();
+            while state.current_packet() < packets.len() {
+                let p = packets[state.current_packet_and_next()].clone();
 
                 if current_hash != state.current_hash() {
                     log::info!("diff hash");

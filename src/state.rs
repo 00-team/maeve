@@ -1,6 +1,7 @@
 use rand::seq::SliceRandom;
 use std::collections::HashSet;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::{
     collections::VecDeque,
     hash::{DefaultHasher, Hash, Hasher},
@@ -8,26 +9,23 @@ use std::{
     time::Duration,
 };
 use tokio::sync::{Notify, RwLock};
-use tsproto_packets::packets::OutPacket;
 
 use crate::PACKET_DELAY;
+use crate::audio::{MaeveAudio, MaeveAudioHead};
 use crate::utils::{fmt_dur, fmt_megabytes};
 
 #[derive(Clone)]
 pub struct Song {
-    pub packets: Vec<OutPacket>,
+    // pub packets: Vec<OutPacket>,
     pub name: String,
+    pub path: PathBuf,
     pub hash: u64,
     pub size: usize,
+    pub capacity: usize,
+    pub duration: Duration,
 }
 
 impl Song {
-    pub const fn duration(&self) -> Duration {
-        Duration::from_millis(
-            self.packets.len() as u64 * PACKET_DELAY.as_millis() as u64,
-        )
-    }
-
     pub fn hash(name: &str, size: usize) -> u64 {
         let mut hashar = DefaultHasher::default();
         name.hash(&mut hashar);
@@ -40,19 +38,22 @@ impl Song {
 pub struct Playlist {
     songs: Vec<Song>,
     size: usize,
+    capacity: usize,
     duration: Duration,
 }
 
 impl Playlist {
     fn add_song(&mut self, song: Song) {
         self.size += song.size;
-        self.duration += song.duration();
+        self.capacity += song.capacity;
+        self.duration += song.duration;
         self.songs.push(song);
     }
 
     fn clear(&mut self) {
         self.songs.clear();
         self.size = 0;
+        self.capacity = 0;
         self.duration = Default::default();
     }
 
@@ -61,11 +62,13 @@ impl Playlist {
         self.songs.drain(range.clone());
 
         self.size = 0;
+        self.capacity = 0;
         self.duration = Default::default();
 
         for s in self.songs.iter() {
             self.size += s.size;
-            self.duration += s.duration();
+            self.capacity += s.capacity;
+            self.duration += s.duration;
         }
     }
 
@@ -222,6 +225,12 @@ impl MaeveState {
         Some(song)
     }
 
+    pub async fn current_song_audio(&self) -> Option<(Song, MaeveAudio)> {
+        let cs = self.current_song().await?;
+        let ad = MaeveAudio::load(&cs.path).ok()?;
+        Some((cs, ad))
+    }
+
     async fn update_hash(&self) {
         let hash = if let Some(song) = self.current_song().await {
             song.hash
@@ -289,7 +298,7 @@ impl MaeveState {
         for (i, s) in pl.songs[range].iter().enumerate() {
             let name = &s.name;
             let ci = offset + i;
-            let tt_dur = fmt_dur(s.duration());
+            let tt_dur = fmt_dur(s.duration);
 
             if ci == cx {
                 let pp_dur = fmt_dur(self.current_duration());
@@ -322,7 +331,7 @@ impl MaeveState {
                 continue;
             }
             let sname = sname.replace(&name, &name_bold);
-            let tt_dur = fmt_dur(s.duration());
+            let tt_dur = fmt_dur(s.duration);
 
             if i == cx {
                 let pp_dur = fmt_dur(self.current_duration());
@@ -352,9 +361,10 @@ impl MaeveState {
         let pl = self.playlist.read().await;
         let q_len = self.queued.read().await.len();
         out += &format!(
-            "playlist:\n    count: {}\n    size: {}\n    duration: {}\n\n",
+            "playlist:\n    count: {}\n    size: {} / {}\n    duration: {}\n\n",
             pl.songs.len(),
             fmt_megabytes(pl.size),
+            fmt_megabytes(pl.capacity),
             fmt_dur(pl.duration)
         );
 
@@ -365,7 +375,7 @@ impl MaeveState {
         if let Some(cs) = self.current_song().await {
             let ci = self.current_index();
             let pp_dur = fmt_dur(self.current_duration());
-            let tt_dur = fmt_dur(cs.duration());
+            let tt_dur = fmt_dur(cs.duration);
 
             out += &format!(
                 "{} [COLOR=#0fff0f]{ci}[/COLOR] [B]{}[/B] {pp_dur}/{tt_dur}\n",
@@ -402,8 +412,35 @@ impl MaeveState {
         let _ = self.queued.write().await.pop_front();
     }
 
-    pub async fn queue_add(&self, path: Vec<String>) {
-        self.queued.write().await.extend(path);
+    pub async fn queue_add(&self, paths: Vec<String>) {
+        let cache_dir = Path::new("maeve_cache");
+
+        let mut nq = Vec::with_capacity(paths.len());
+
+        for p in paths {
+            let cf = cache_dir.join(&p);
+            if !cf.is_file() {
+                nq.push(p);
+                continue;
+            }
+
+            let Ok(mah) = MaeveAudioHead::load(&cf) else {
+                nq.push(p);
+                continue;
+            };
+
+            self.add_song(Song {
+                hash: Song::hash(&p, mah.size),
+                name: p,
+                size: mah.size,
+                duration: mah.duration,
+                path: cf,
+                capacity: 0,
+            })
+            .await;
+        }
+
+        self.queued.write().await.extend(nq);
         self.queue_notify.notify_one();
     }
 
@@ -429,17 +466,20 @@ impl MaeveState {
         }
 
         let mut plsize = 0usize;
+        let mut plcap = 0usize;
         let mut pdur = Duration::default();
         let mut pl = self.playlist.write().await;
         pl.songs.retain(|s| {
             let v = saw.insert(fname(&s.name));
             if v {
                 plsize += s.size;
-                pdur += s.duration();
+                plcap += s.capacity;
+                pdur += s.duration;
             }
             v
         });
         pl.size = plsize;
+        pl.capacity = plcap;
         pl.duration = pdur;
 
         self.queued.write().await.retain(|s| saw.insert(fname(s)));

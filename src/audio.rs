@@ -1,10 +1,120 @@
-use std::process::Stdio;
+use std::{
+    io::{Read, Write},
+    path::Path,
+    process::Stdio,
+    time::Duration,
+};
 use tokio::{io::AsyncReadExt, process::Command};
 use tsproto_packets::packets::{AudioData, CodecType, OutAudio, OutPacket};
 
-use crate::MaeveError;
+use crate::{MaeveError, PACKET_DELAY, state::Song};
 
-pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
+pub struct MaeveAudio {
+    chunks: Vec<u32>,
+    opus: Vec<u8>,
+}
+
+impl MaeveAudio {
+    pub fn to_packets(self) -> Vec<OutPacket> {
+        let mut offset = 0usize;
+        let mut all_packets = Vec::with_capacity(self.chunks.len());
+        for (id, len) in self.chunks.iter().enumerate() {
+            let len = *len as usize;
+            let packet = OutAudio::new(&AudioData::C2S {
+                id: id as u16,
+                codec: CodecType::OpusMusic,
+                data: &self.opus[offset..offset + len],
+            });
+            offset += len;
+            all_packets.push(packet);
+        }
+
+        all_packets
+    }
+
+    pub fn save(&self, path: &Path) -> Result<(), MaeveError> {
+        if path.is_dir() {
+            return Err(MaeveError::AudioSaveFailed);
+        }
+        let Some(parent) = path.parent() else {
+            return Err(MaeveError::AudioSaveFailed);
+        };
+
+        let _ = std::fs::create_dir_all(parent);
+
+        fn _save(ma: &MaeveAudio, path: &Path) -> std::io::Result<()> {
+            let mut file = std::fs::File::options()
+                .write(true)
+                .truncate(true)
+                .create(true)
+                .open(path)?;
+
+            let chunks: &[u8] = bytemuck::cast_slice(&ma.chunks);
+            file.write_all(&(chunks.len() as u64).to_le_bytes())?;
+            file.write_all(&(ma.opus.len() as u64).to_le_bytes())?;
+            file.write_all(chunks)?;
+            file.write_all(&ma.opus)?;
+
+            Ok(())
+        }
+
+        if _save(&self, path).is_err() {
+            return Err(MaeveError::AudioSaveFailed);
+        }
+
+        Ok(())
+    }
+
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let mut file = std::fs::File::options().read(true).open(path)?;
+
+        // let chunks: &[u8] = bytemuck::cast_slice(&self.chunks);
+        let mut chunks_len = [0u8; 8];
+        file.read_exact(&mut chunks_len)?;
+        let chunks_len = u64::from_le_bytes(chunks_len) as usize;
+
+        let mut opus_len = [0u8; 8];
+        file.read_exact(&mut opus_len)?;
+        let opus_len = u64::from_le_bytes(opus_len) as usize;
+
+        let mut chunks = vec![0; chunks_len];
+        file.read_exact(&mut chunks)?;
+
+        let mut opus = vec![0; opus_len];
+        file.read_exact(&mut opus)?;
+
+        Ok(Self { opus, chunks: bytemuck::cast_slice(&chunks).to_vec() })
+    }
+}
+
+pub struct MaeveAudioHead {
+    pub duration: Duration,
+    pub size: usize,
+}
+
+impl MaeveAudioHead {
+    pub fn load(path: &Path) -> std::io::Result<Self> {
+        let mut file = std::fs::File::options().read(true).open(path)?;
+
+        // let chunks: &[u8] = bytemuck::cast_slice(&self.chunks);
+        let mut chunks_len = [0u8; 8];
+        file.read_exact(&mut chunks_len)?;
+        let chunks_len = u64::from_le_bytes(chunks_len) as usize;
+
+        let mut opus_len = [0u8; 8];
+        file.read_exact(&mut opus_len)?;
+        let opus_len = u64::from_le_bytes(opus_len) as usize;
+
+        let duration = Duration::from_millis(
+            (chunks_len / 4) as u64 * PACKET_DELAY.as_millis() as u64,
+        );
+
+        Ok(Self { duration, size: opus_len })
+    }
+}
+
+pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
+    let cache_dir = Path::new("maeve_cache");
     let ffmpeg = Command::new("taskset")
         .args(&[
             "-c",
@@ -56,36 +166,56 @@ pub async fn audio_render(path: &str) -> Result<Vec<OutPacket>, MaeveError> {
     )
     .expect("Could not create encoder");
 
-    let mut id = 0;
-
     const FRAME_SIZE: usize = 960;
     const MAX_PACKET_SIZE: usize = 3 * 1276;
 
     let mut pcm_in_be: [i16; FRAME_SIZE * 2] = [0; FRAME_SIZE * 2];
     let mut opus_pkt: [u8; MAX_PACKET_SIZE] = [0; MAX_PACKET_SIZE];
-    let mut all_packets = Vec::with_capacity(50 * 60 * 30);
-    // let total_chunks = samples.len() / (FRAME_SIZE * 2);
+    let mut audio = MaeveAudio {
+        chunks: Vec::with_capacity(samples.len() / FRAME_SIZE * 2),
+        opus: Vec::with_capacity(samples.len()),
+    };
 
     for chunk in samples.chunks(FRAME_SIZE * 2) {
+        let clen = chunk.len();
+        pcm_in_be[..clen].copy_from_slice(chunk);
         // let clen = chunk.len();
-        for (i, d) in chunk.iter().enumerate() {
-            // pcm_in_be[i] = (*d as f32 * 0.5) as i16;
-            pcm_in_be[i] = *d;
-        }
-        let len = encoder.encode(&pcm_in_be, &mut opus_pkt).unwrap();
+        // for (i, d) in chunk.iter().enumerate() {
+        //     // pcm_in_be[i] = (*d as f32 * 0.5) as i16;
+        //     pcm_in_be[i] = *d;
+        // }
+        let len = encoder.encode(&pcm_in_be[..clen], &mut opus_pkt).unwrap();
 
-        let packet = OutAudio::new(&AudioData::C2S {
-            id,
-            codec: CodecType::OpusMusic,
-            data: &opus_pkt[..len],
-        });
-        id += 1;
-        all_packets.push(packet);
+        audio.chunks.push(len as u32);
+        audio.opus.extend_from_slice(&opus_pkt[..len]);
+        // let packet = OutAudio::new(&AudioData::C2S {
+        //     id,
+        //     codec: CodecType::OpusMusic,
+        //     data: &opus_pkt[..len],
+        // });
+        // id += 1;
+        // all_packets.push(packet);
     }
 
-    if all_packets.is_empty() {
-        return Err(MaeveError::AudioEncodeFailed);
-    }
+    let cf = cache_dir.join(path);
+    audio.save(&cf)?;
+    let size = audio.opus.len();
 
-    Ok(all_packets)
+    let name = path
+        .strip_prefix("music/")
+        .map(|v| v.to_string())
+        .unwrap_or(path.to_string());
+
+    let duration = Duration::from_millis(
+        audio.chunks.len() as u64 * PACKET_DELAY.as_millis() as u64,
+    );
+
+    Ok(Song {
+        path: cf,
+        hash: Song::hash(&name, size),
+        name,
+        duration,
+        size,
+        capacity: 0,
+    })
 }
