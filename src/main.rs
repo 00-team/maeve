@@ -190,6 +190,9 @@ async fn main() -> Result<(), MaeveError> {
                     MaeveCommand::Find(name) => {
                         sx(state.find(name).await);
                     }
+                    MaeveCommand::Search(pat) => {
+                        sx(utils::do_search(&pat));
+                    }
                     MaeveCommand::Shuffle => {
                         state.shuffle().await;
                         sx(state.pl_list(Some(1..999)).await);

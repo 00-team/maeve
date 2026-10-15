@@ -21,6 +21,7 @@ pub enum MaeveCommand {
     Shuffle,
     Sort,
     Loop,
+    Search(String),
 }
 
 impl MaeveCommand {
@@ -40,6 +41,7 @@ q | queue
 i | info
 s | seek <minutes>m <secs>
 f | find <name>
+search -- search for a songs in music directory
 dedup -- remove duplicate songs from the list and queue
 clear -- this will clear the list
 queue-clear this will clear the queue
@@ -73,6 +75,7 @@ loop -- toggle between playlist loop, song loop, and no loop
                 Self::Remove(range)
             }
             "help" | "h" => Self::Help,
+            "search" => Self::Search(it.next()?.to_string()),
             "find" | "f" => Self::Find(it.next()?.to_string()),
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,

@@ -370,6 +370,7 @@ impl MaeveState {
         } else if self.loop_song() {
             out.push_str("> looping current song");
         }
+        out.push('\n');
 
         let q_len = self.queued.read().await.len();
         {

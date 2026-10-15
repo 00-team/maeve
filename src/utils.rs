@@ -15,6 +15,26 @@ pub fn do_ls(arg: &str) -> Vec<String> {
     files
 }
 
+pub fn do_search(pat: &str) -> String {
+    let mut res = String::with_capacity(1024);
+    res.push('\n');
+
+    let output = Command::new("fd")
+        .args(["-C", "music", "-iF", "-t", "f", pat])
+        .output();
+
+    let Ok(output) = output else {
+        res.push_str("fd failed :/");
+        return res;
+    };
+
+    res += &String::from_utf8_lossy(&output.stdout);
+    res
+
+    // .map(|o| .to_string())
+    // .unwrap_or_else(|_| "error :/".to_string());
+}
+
 pub fn split_at_line(input: &str, max_bytes: usize) -> Vec<&str> {
     let mut chunks = Vec::with_capacity(24);
     let mut remaining = input;
