@@ -19,8 +19,8 @@ pub fn do_search(pat: &str) -> String {
     let mut res = String::with_capacity(1024);
     res.push('\n');
 
-    let output = Command::new("fd")
-        .args(["-C", "music", "-iF", "-t", "f", pat])
+    let output = Command::new("/root/.cargo/bin/fd")
+        .args(["-C", "/x/maeve/music/", "-iF", "-t", "f", pat])
         .output();
 
     let Ok(output) = output else {
