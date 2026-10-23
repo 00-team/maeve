@@ -12,6 +12,7 @@ use tokio::sync::{Notify, RwLock};
 
 use crate::PACKET_DELAY;
 use crate::audio::{MaeveAudio, MaeveAudioHead};
+use crate::command::ListRange;
 use crate::utils::{fmt_dur, fmt_megabytes};
 
 #[derive(Clone)]
@@ -274,7 +275,7 @@ impl MaeveState {
         self.playing.load(Ordering::Relaxed)
     }
 
-    pub async fn pl_list(&self, range: Option<Range<usize>>) -> String {
+    pub async fn pl_list(&self, range: ListRange) -> String {
         let mut out = String::with_capacity(1024);
 
         let cx = self.current_index();
@@ -282,20 +283,28 @@ impl MaeveState {
         let pll = pl.songs.len();
         let cx = cx.min(pll.saturating_sub(1));
 
-        let range = if let Some(range) = range {
-            if range.end == 999 && range.start == 0 {
-                0..pll
-            } else {
-                let end = range.end.min(pll);
-                let start = range.start.min(end.saturating_sub(1));
-                start..end
+        if pll == 0 {
+            return "\nplaylist is empty\n\nNOTE: add using using the `add` command".to_string();
+        }
+
+        let mut range = match range {
+            ListRange::All => 0..pll,
+            ListRange::Current => {
+                let s = cx.saturating_sub(4);
+                let end = (s + 10).min(pll);
+                let s = if end - s < 10 { end.saturating_sub(10) } else { s };
+                s..end
             }
-        } else {
-            let s = cx.saturating_sub(4);
-            let end = (s + 10).min(pll);
-            let s = if end - s < 10 { end.saturating_sub(10) } else { s };
-            s..end
+            ListRange::Page(p) => (p * 10)..(p + 1) * 10,
+            ListRange::Range(r) => r,
         };
+
+        if range.end < range.start {
+            let start = range.end;
+            range.end = range.start;
+            range.start = start;
+        }
+        range.end = range.end.min(pll);
 
         out += &format!("\ncurrent playlist: {range:?} | {pll}\n");
 

@@ -1,5 +1,13 @@
 use std::ops::Range;
 
+#[derive(Debug, Clone)]
+pub enum ListRange {
+    Page(usize),
+    Range(Range<usize>),
+    Current,
+    All,
+}
+
 #[derive(Debug)]
 pub enum MaeveCommand {
     Add(String),
@@ -10,7 +18,7 @@ pub enum MaeveCommand {
     Help,
     Next,
     Past,
-    List(Option<Range<usize>>),
+    List(ListRange),
     Queue,
     Info,
     Seek(u64),
@@ -29,7 +37,7 @@ impl MaeveCommand {
         "
 Maeve commands:
 
-a | add <song-query> -- use like music/fadaei*
+a | add <song-query> [color=#000]#[/color] use like `a fadaei*` or `add classic/hayed*`
 j | jump <index>
 r | remove <index> | <start>..<end>
 c | play -- toggle playing
@@ -41,20 +49,20 @@ q | queue
 i | info
 s | seek <minutes>m <secs>
 f | find <name>
-search -- search for a songs in music directory
-dedup -- remove duplicate songs from the list and queue
-clear -- this will clear the list
-queue-clear this will clear the queue
+search [color=#000]#[/color] search for a songs in music directory
+dedup [color=#000]#[/color] remove duplicate songs from the list and queue
+clear [color=#000]#[/color] this will clear the list
+queue-clear [color=#000]#[/color] this will clear the queue
 shuffle
 sort
-loop -- toggle between playlist loop, song loop, and no loop
+loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
 
 [COLOR=#FFD700]made by ostad 007[/COLOR]
         "
     }
 
     pub fn parse_str(value: &str) -> Option<Self> {
-        let mut it = value.splitn(2, ' ');
+        let mut it = value.trim().splitn(2, ' ');
         let cmd = it.next()?;
 
         Some(match cmd {
@@ -80,25 +88,26 @@ loop -- toggle between playlist loop, song loop, and no loop
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,
             "queue" | "q" => Self::Queue,
+            "la" => Self::List(ListRange::All),
             "list" | "l" => {
                 let Some(args) = it.next() else {
-                    return Some(Self::List(None));
+                    return Some(Self::List(ListRange::Current));
                 };
 
                 if matches!(args, "a" | "all") {
-                    return Some(Self::List(Some(0..2048)));
+                    return Some(Self::List(ListRange::All));
                 }
 
                 let mut it = args.splitn(2, "..");
                 let start = it.next()?.parse::<usize>().ok()?;
                 let end = it.next().and_then(|v| v.parse::<usize>().ok());
                 let range = if let Some(end) = end {
-                    start.min(end)..start.max(end) + 1
+                    ListRange::Range(start.min(end)..start.max(end) + 1)
                 } else {
-                    start * 10..(start + 1) * 10
+                    ListRange::Page(start)
                 };
 
-                Self::List(Some(range))
+                Self::List(range)
             }
             "info" | "i" => Self::Info,
             "seek" | "s" => {

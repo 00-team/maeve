@@ -15,7 +15,10 @@ mod utils;
 
 pub use error::MaeveError;
 
-use crate::{command::MaeveCommand, state::MaeveState};
+use crate::{
+    command::{ListRange, MaeveCommand},
+    state::MaeveState,
+};
 
 // const PLAYLIST_END_DUR: Duration = Duration::from_secs(2);
 pub const PACKET_DELAY: Duration = Duration::from_micros(20000);
@@ -185,7 +188,7 @@ async fn main() -> Result<(), MaeveError> {
                     }
                     MaeveCommand::Sort => {
                         state.sort().await;
-                        sx(state.pl_list(Some(1..999)).await);
+                        sx(state.pl_list(ListRange::All).await);
                     }
                     MaeveCommand::Find(name) => {
                         sx(state.find(name).await);
@@ -195,7 +198,7 @@ async fn main() -> Result<(), MaeveError> {
                     }
                     MaeveCommand::Shuffle => {
                         state.shuffle().await;
-                        sx(state.pl_list(Some(1..999)).await);
+                        sx(state.pl_list(ListRange::All).await);
                     }
                     MaeveCommand::Loop => {
                         state.loop_cycle();
