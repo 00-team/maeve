@@ -34,7 +34,7 @@ pub enum MaeveCommand {
 
 impl MaeveCommand {
     pub fn help() -> &'static str {
-        "
+        concat!("
 Maeve commands:
 
 a | add <song-query> [color=#000]#[/color] use like `a fadaei*` or `add classic/hayed*`
@@ -57,8 +57,8 @@ shuffle
 sort
 loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
 
-[COLOR=#FFD700]made by ostad 007[/COLOR]
-        "
+[COLOR=#FFD700]made by ostad 007[/COLOR] version: 
+        ", env!("CARGO_PKG_VERSION"))
     }
 
     pub fn parse_str(value: &str) -> Option<Self> {
