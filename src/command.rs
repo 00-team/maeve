@@ -57,8 +57,7 @@ shuffle
 sort
 loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
 
-[COLOR=#FFD700]made by ostad 007[/COLOR] version: 
-        ", env!("CARGO_PKG_VERSION"))
+[COLOR=#FFD700]made by ostad 007[/COLOR] version: ", env!("CARGO_PKG_VERSION"))
     }
 
     pub fn parse_str(value: &str) -> Option<Self> {
