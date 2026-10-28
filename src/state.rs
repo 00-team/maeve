@@ -397,13 +397,15 @@ impl MaeveState {
 
         if let Some(cs) = self.current_song().await {
             let ci = self.current_index();
-            let pp_dur = fmt_dur(self.current_duration());
+            let cd = self.current_duration();
+            let pp_dur = fmt_dur(cd);
             let tt_dur = fmt_dur(cs.duration);
 
             out += &format!(
-                "{} [COLOR=#0fff0f]{ci}[/COLOR] [B]{}[/B] {pp_dur}/{tt_dur}\n",
+                "{} [COLOR=#0fff0f]{ci}[/COLOR] [B]{}[/B] {pp_dur}/{tt_dur} | {}s\n",
                 if self.playing() { ">" } else { "|" },
                 cs.name,
+                cd.as_secs()
             );
         }
 
