@@ -23,10 +23,7 @@ pub enum MaeveCommand {
     Info,
     Seek(u64),
     Find(String),
-    Tree {
-        path: String,
-        level: 
-    },
+    Tree(String),
     Dedup,
     Clear,
     QueueClear,
@@ -53,7 +50,7 @@ q | queue
 i | info
 s | seek <minutes>m <secs>
 f | find <name>
-tree <path> -L<num> [color=#000]#[/color] show a tree of files at <path>
+tree <path> [color=#000]#[/color] show a tree of files at <path>
 search [color=#000]#[/color] search for a songs in music directory
 dedup [color=#000]#[/color] remove duplicate songs from the list and queue
 clear [color=#000]#[/color] this will clear the list
@@ -92,9 +89,7 @@ loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,
             "queue" | "q" => Self::Queue,
-            "tree" => {
-                Self::Tree(it.next().unwrap_or_default().to_string())
-            },
+            "tree" => Self::Tree(it.next().unwrap_or_default().to_string()),
             "la" => Self::List(ListRange::All),
             "list" | "l" => {
                 let Some(args) = it.next() else {
