@@ -53,7 +53,7 @@ pub fn teamspeak_tree<P: AsRef<Path>>(path: P) -> io::Result<String> {
     let level1 = dir_entries(root)?;
     let count1 = level1.len();
 
-    let is_music_root = root_name == "music/";
+    let is_music_root = root_name == "music";
 
     for (i, (name, is_dir)) in level1.iter().enumerate() {
         let last1 = i + 1 == count1;
