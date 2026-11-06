@@ -300,9 +300,7 @@ impl MaeveState {
         };
 
         if range.end < range.start {
-            let start = range.end;
-            range.end = range.start;
-            range.start = start;
+            std::mem::swap(&mut range.end, &mut range.start);
         }
         range.end = range.end.min(pll);
 
@@ -314,7 +312,7 @@ impl MaeveState {
             out.push_str("> looping current song");
         }
 
-        out.push_str("\n");
+        out.push('\n');
 
         let offset = range.start;
         for (i, s) in pl.songs[range].iter().enumerate() {

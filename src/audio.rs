@@ -14,7 +14,7 @@ pub struct MaeveAudio {
 }
 
 impl MaeveAudio {
-    pub fn to_packets(self) -> Vec<OutPacket> {
+    pub fn into_packets(self) -> Vec<OutPacket> {
         let mut offset = 0usize;
         let mut all_packets = Vec::with_capacity(self.chunks.len());
         for (id, len) in self.chunks.iter().enumerate() {
@@ -57,7 +57,7 @@ impl MaeveAudio {
             Ok(())
         }
 
-        if _save(&self, path).is_err() {
+        if _save(self, path).is_err() {
             return Err(MaeveError::AudioSaveFailed);
         }
 
@@ -111,7 +111,7 @@ impl MaeveAudioHead {
 pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
     let cache_dir = Path::new("cache");
     let ffmpeg = Command::new("taskset")
-        .args(&[
+        .args([
             "-c",
             "0,1,2",
             "ffmpeg",
@@ -119,7 +119,7 @@ pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
             "-loglevel",
             "error",
             "-i",
-            &path,
+            path,
             "-af",
             // "loudnorm=I=-16:LRA=11:TP=-1.5",
             "loudnorm=I=-16:LRA=11:TP=-1.5,acompressor=threshold=-18dB:ratio=3:attack=20:release=250,alimiter=limit=0.95",
@@ -140,7 +140,9 @@ pub async fn audio_render(path: &str) -> Result<Song, MaeveError> {
     let mut audio_out = Vec::with_capacity(50 * 1024 * 1024);
     ffout.read_to_end(&mut audio_out).await.unwrap();
     let samples: Vec<i16> = audio_out
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| i16::from_be_bytes([chunk[0], chunk[1]]))
         .collect();
 

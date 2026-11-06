@@ -11,6 +11,7 @@ mod command;
 mod error;
 mod logger;
 mod state;
+mod tree;
 mod utils;
 
 pub use error::MaeveError;
@@ -102,7 +103,7 @@ async fn main() -> Result<(), MaeveError> {
                 state.current_notified().await;
                 continue;
             };
-            let packets = audio.to_packets();
+            let packets = audio.into_packets();
             let current_hash = song.hash;
 
             let name = song.name.clone();
@@ -186,6 +187,15 @@ async fn main() -> Result<(), MaeveError> {
                         let range = state.remove_range(r).await;
                         sx(format!("removed {range:?} = {}", range.len()));
                     }
+                    MaeveCommand::Tree(p) => {
+                        match tree::teamspeak_tree(format!("./music/{p}")) {
+                            Ok(v) => sx(v),
+                            Err(_) => {
+                                sx("[COLOR=#ff5555]Not Found[/COLOR]"
+                                    .to_string());
+                            }
+                        }
+                    }
                     MaeveCommand::Sort => {
                         state.sort().await;
                         sx(state.pl_list(ListRange::All).await);
@@ -226,7 +236,7 @@ async fn main() -> Result<(), MaeveError> {
                         let list = utils::do_ls(&format!("music/{name}"));
                         if list.is_empty() {
                             const ERR: &str =
-                                "[COLOR=#ff0000]NO FILE WAS FOUND[/COLOR]";
+                                "[COLOR=#ff5555]NO FILE WAS FOUND[/COLOR]";
                             sx(format!("using \"{name}\" {ERR}"));
                             return Ok(());
                         }
