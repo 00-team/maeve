@@ -12,7 +12,7 @@ use tokio::sync::{Notify, RwLock};
 
 use crate::PACKET_DELAY;
 use crate::audio::{MaeveAudio, MaeveAudioHead};
-use crate::command::ListRange;
+use crate::command::{ArgRange, ListRange, RemoveArg};
 use crate::utils::{fmt_dur, fmt_megabytes};
 
 #[derive(Clone)]
@@ -73,7 +73,15 @@ impl Playlist {
         self.duration = Default::default();
     }
 
-    fn drain(&mut self, range: Range<usize>) {
+    const fn len(&self) -> usize {
+        self.songs.len()
+    }
+
+    fn drain(&mut self, mut range: Range<usize>) {
+        if range.end < range.start {
+            std::mem::swap(&mut range.end, &mut range.start);
+        }
+
         let range = range.start..self.songs.len().min(range.end);
         self.songs.drain(range.clone());
 
@@ -181,10 +189,21 @@ impl MaeveState {
         self.current_notify.notify_one();
     }
 
-    pub async fn remove_range(&self, range: Range<usize>) -> Range<usize> {
-        self.playlist.write().await.drain(range.clone());
-
+    pub async fn remove_range(&self, arg: RemoveArg) -> Range<usize> {
         let cdx = self.current_index();
+        let mut pl = self.playlist.write().await;
+
+        let mut range = match arg {
+            RemoveArg::Current => cdx..cdx + 1,
+            RemoveArg::Range(r) => r.start..r.end.unwrap_or(pl.len()),
+        };
+
+        if range.end < range.start {
+            std::mem::swap(&mut range.end, &mut range.start);
+        }
+
+        pl.drain(range.clone());
+
         if range.contains(&cdx) {
             self.current_playing.store(range.start, Ordering::SeqCst);
         } else if cdx >= range.end {
@@ -296,7 +315,7 @@ impl MaeveState {
                 s..end
             }
             ListRange::Page(p) => (p * 10)..(p + 1) * 10,
-            ListRange::Range(r) => r,
+            ListRange::Range { start, end } => start..end.unwrap_or(pll),
         };
 
         if range.end < range.start {
@@ -496,5 +515,40 @@ impl MaeveState {
         pl.duration = pdur;
 
         self.queued.write().await.retain(|s| saw.insert(fname(s)));
+    }
+
+    pub async fn pl_move(&self, range: ArgRange, to: usize) -> Range<usize> {
+        let cdx = self.current_index();
+        let mut pl = self.playlist.write().await;
+
+        let mut range = range.start..range.end.unwrap_or(pl.len());
+        let to = to.min(pl.len());
+
+        if range.end < range.start {
+            std::mem::swap(&mut range.end, &mut range.start);
+        }
+
+        let (start, end) = (range.start, range.end);
+
+        if to < start {
+            pl.songs[to..end].rotate_right(end - start);
+        } else if to > end {
+            pl.songs[start..to].rotate_left(end - start);
+        }
+
+        if range.contains(&cdx) {
+            self.current_playing.store(to + (cdx - start), Ordering::SeqCst);
+        } else if start < cdx && to > cdx {
+            self.current_playing
+                .store(cdx.saturating_sub(range.len()), Ordering::SeqCst);
+        } else if start > cdx && to < cdx {
+            self.current_playing
+                .store(cdx.saturating_add(range.len()), Ordering::SeqCst);
+        }
+
+        self.update_hash().await;
+        self.current_notify.notify_one();
+
+        range
     }
 }

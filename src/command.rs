@@ -1,11 +1,36 @@
-use std::ops::Range;
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ListRange {
     Page(usize),
-    Range(Range<usize>),
+    Range { start: usize, end: Option<usize> },
     Current,
     All,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RemoveArg {
+    Current,
+    Range(ArgRange),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ArgRange {
+    pub start: usize,
+    pub end: Option<usize>,
+}
+
+impl ArgRange {
+    pub fn parse(arg: &str) -> Option<Self> {
+        let mut it = arg.splitn(2, "..");
+        let start = it.next()?;
+        let Some(end) = it.next() else {
+            let start = start.parse::<usize>().ok()?;
+            return Some(Self { start, end: Some(start + 1) });
+        };
+
+        let start = start.parse::<usize>().ok().unwrap_or(0);
+        let end = end.parse::<usize>().ok();
+        Some(Self { start, end })
+    }
 }
 
 #[derive(Debug)]
@@ -14,7 +39,8 @@ pub enum MaeveCommand {
     Pause,
     Play,
     Jump(usize),
-    Remove(Range<usize>),
+    Remove(RemoveArg),
+    Move { range: ArgRange, to: usize },
     Help,
     Next,
     Past,
@@ -46,6 +72,7 @@ c | play -- toggle playing
 n | next
 p | past
 l | list <page> | <start>..<end> | a | all
+m | move <start>..<end> <to> | <idx> <to>
 q | queue
 i | info
 s | seek <minutes>m <secs>
@@ -63,36 +90,41 @@ loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
     }
 
     pub fn parse_str(value: &str) -> Option<Self> {
-        let mut it = value.trim().splitn(2, ' ');
-        let cmd = it.next()?;
+        let (cmd, arg) = {
+            let mut it = value.trim().splitn(2, ' ');
+            (it.next()?, it.next().map(|a| a.trim()))
+        };
 
         Some(match cmd {
-            "add" | "a" => Self::Add(it.next()?.to_string()),
+            "add" | "a" => Self::Add(arg?.to_string()),
             "play" | "c" => Self::Play,
             "pause" | "=" => Self::Pause,
-            "jump" | "j" => Self::Jump(it.next()?.parse().ok()?),
+            "jump" | "j" => Self::Jump(arg?.parse().ok()?),
             "remove" | "r" => {
-                let mut it = it.next()?.splitn(2, "..");
-                let start = it.next()?.parse::<usize>().ok()?;
-                let end = it.next().and_then(|v| v.parse::<usize>().ok());
-                let range = if let Some(end) = end {
-                    start.min(end)..start.max(end) + 1
-                } else {
-                    start..start + 1
+                let Some(arg) = arg else {
+                    return Some(Self::Remove(RemoveArg::Current));
                 };
 
-                Self::Remove(range)
+                Self::Remove(RemoveArg::Range(ArgRange::parse(arg)?))
+            }
+            "move" | "m" => {
+                let mut it = arg?.splitn(2, ' ');
+
+                let range = ArgRange::parse(it.next()?)?;
+                let to = it.next()?.trim().parse::<usize>().ok()?;
+
+                Self::Move { range, to }
             }
             "help" | "h" => Self::Help,
-            "search" => Self::Search(it.next()?.to_string()),
-            "find" | "f" => Self::Find(it.next()?.to_string()),
+            "search" => Self::Search(arg?.to_string()),
+            "find" | "f" => Self::Find(arg?.to_string()),
             "next" | "n" => Self::Next,
             "past" | "p" => Self::Past,
             "queue" | "q" => Self::Queue,
-            "tree" => Self::Tree(it.next().unwrap_or_default().to_string()),
+            "tree" => Self::Tree(arg.unwrap_or_default().to_string()),
             "la" => Self::List(ListRange::All),
             "list" | "l" => {
-                let Some(args) = it.next() else {
+                let Some(args) = arg else {
                     return Some(Self::List(ListRange::Current));
                 };
 
@@ -102,9 +134,9 @@ loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
 
                 let mut it = args.splitn(2, "..");
                 let start = it.next()?.parse::<usize>().ok()?;
-                let end = it.next().and_then(|v| v.parse::<usize>().ok());
-                let range = if let Some(end) = end {
-                    ListRange::Range(start.min(end)..start.max(end) + 1)
+
+                let range = if let Some(end) = it.next() {
+                    ListRange::Range { start, end: end.parse().ok() }
                 } else {
                     ListRange::Page(start)
                 };
@@ -113,9 +145,7 @@ loop [color=#000]#[/color] toggle between playlist loop, song loop, and no loop
             }
             "info" | "i" => Self::Info,
             "seek" | "s" => {
-                let Some(args) = it.next() else {
-                    return Some(Self::Seek(0));
-                };
+                let Some(args) = arg else { return Some(Self::Seek(0)) };
 
                 let mut total_secs = 0u64;
                 for s in args.splitn(2, ' ') {

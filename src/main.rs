@@ -196,6 +196,13 @@ async fn main() -> Result<(), MaeveError> {
                             }
                         }
                     }
+                    MaeveCommand::Move { range, to } => {
+                        let range = state.pl_move(range, to).await;
+                        sx(format!(
+                            "moved {range:?} = {} to {to}",
+                            range.len()
+                        ));
+                    }
                     MaeveCommand::Sort => {
                         state.sort().await;
                         sx(state.pl_list(ListRange::All).await);
