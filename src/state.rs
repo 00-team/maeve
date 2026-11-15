@@ -191,24 +191,29 @@ impl MaeveState {
 
     pub async fn remove_range(&self, arg: RemoveArg) -> Range<usize> {
         let cdx = self.current_index();
-        let mut pl = self.playlist.write().await;
+        let range = {
+            let mut pl = self.playlist.write().await;
 
-        let mut range = match arg {
-            RemoveArg::Current => cdx..cdx + 1,
-            RemoveArg::Range(r) => r.start..r.end.unwrap_or(pl.len()),
+            let mut range = match arg {
+                RemoveArg::Current => cdx..cdx + 1,
+                RemoveArg::Range(r) => r.start..r.end.unwrap_or(pl.len()),
+            };
+
+            if range.end < range.start {
+                std::mem::swap(&mut range.end, &mut range.start);
+            }
+
+            pl.drain(range.clone());
+
+            if range.contains(&cdx) {
+                self.current_playing.store(range.start, Ordering::SeqCst);
+            } else if cdx >= range.end {
+                self.current_playing
+                    .store(cdx.saturating_sub(1), Ordering::SeqCst);
+            }
+
+            range
         };
-
-        if range.end < range.start {
-            std::mem::swap(&mut range.end, &mut range.start);
-        }
-
-        pl.drain(range.clone());
-
-        if range.contains(&cdx) {
-            self.current_playing.store(range.start, Ordering::SeqCst);
-        } else if cdx >= range.end {
-            self.current_playing.store(cdx.saturating_sub(1), Ordering::SeqCst);
-        }
 
         self.update_hash().await;
         self.current_notify.notify_one();
@@ -519,29 +524,34 @@ impl MaeveState {
 
     pub async fn pl_move(&self, range: ArgRange, to: usize) -> Range<usize> {
         let cdx = self.current_index();
-        let mut pl = self.playlist.write().await;
+        let range = {
+            let mut pl = self.playlist.write().await;
 
-        let mut range = range.start..range.end.unwrap_or(pl.len());
-        let to = to.min(pl.len());
+            let mut range = range.start..range.end.unwrap_or(pl.len());
+            let to = to.min(pl.len());
 
-        if range.end < range.start {
-            std::mem::swap(&mut range.end, &mut range.start);
-        }
+            if range.end < range.start {
+                std::mem::swap(&mut range.end, &mut range.start);
+            }
 
-        let (start, end) = (range.start, range.end);
+            let (start, end) = (range.start, range.end);
 
-        if to < start {
-            pl.songs[to..end].rotate_right(end - start);
-        } else if to > end {
-            pl.songs[start..to].rotate_left(end - start);
-        }
+            if to < start {
+                pl.songs[to..end].rotate_right(end - start);
+            } else if to > end {
+                pl.songs[start..to].rotate_left(end - start);
+            }
+
+            range
+        };
 
         if range.contains(&cdx) {
-            self.current_playing.store(to + (cdx - start), Ordering::SeqCst);
-        } else if start < cdx && to > cdx {
+            self.current_playing
+                .store(to + (cdx - range.start), Ordering::SeqCst);
+        } else if range.start < cdx && to > cdx {
             self.current_playing
                 .store(cdx.saturating_sub(range.len()), Ordering::SeqCst);
-        } else if start > cdx && to < cdx {
+        } else if range.start > cdx && to < cdx {
             self.current_playing
                 .store(cdx.saturating_add(range.len()), Ordering::SeqCst);
         }
